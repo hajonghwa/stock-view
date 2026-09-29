@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#217346" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<title>stock_brief.xlsx</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23217346'/%3E%3Cpath d='M9 9l14 14M23 9L9 23' stroke='white' stroke-width='3.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="login" class="login" hidden>
+  <form id="login-form" class="login-card" autocomplete="off">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">X</span>stock_brief.xlsx</div>
+    <h1>보호된 통합 문서</h1>
+    <p class="muted">확인용 비밀번호를 입력하세요. 자료는 이 브라우저 안에서만 풀립니다.</p>
+    <label class="field">
+      <span>확인용 비밀번호</span>
+      <input id="password" type="password" autocomplete="current-password" required minlength="1" autofocus>
+    </label>
+    <label class="check"><input id="remember" type="checkbox"> 이 기기에서 30일 동안 기억</label>
+    <button id="login-button" class="primary" type="submit">열기</button>
+    <p id="login-message" class="message" role="alert"></p>
+    <p class="fineprint">조회 전용입니다. 주문·매매 켜기는 텔레그램이나 PC 프로그램에서 하세요.</p>
+  </form>
+</main>
+
+<div id="app" class="app" hidden>
+  <!-- 제목 표시줄 -->
+  <div class="titlebar">
+    <span class="qat" aria-hidden="true"><span class="save">💾</span><span>↩</span><span>↪</span></span>
+    <span class="doc-title" id="doc-title">stock_brief.xlsx</span>
+    <span class="titlebar-right">
+      <button id="theme" class="win-btn" type="button" aria-label="화면 테마 바꾸기">◐</button>
+      <button id="lock" class="win-btn" type="button" aria-label="잠그기">⏻</button>
+    </span>
+  </div>
+
+  <!-- 리본 -->
+  <nav class="ribbon-tabs" aria-label="리본">
+    <span class="file-tab">파일</span>
+    <span class="rt on">홈</span><span class="rt">삽입</span><span class="rt">페이지 레이아웃</span>
+    <span class="rt">수식</span><span class="rt">데이터</span><span class="rt">검토</span><span class="rt">보기</span>
+    <span class="rt">도움말</span>
+  </nav>
+  <div class="ribbon" aria-hidden="true">
+    <div class="rgroup"><div class="ritems"><span class="rbig">📋<em>붙여넣기</em></span></div><div class="rname">클립보드</div></div>
+    <div class="rgroup"><div class="ritems"><span class="rsel">맑은 고딕</span><span class="rsel sm">11</span><span class="ricon">가</span><span class="ricon i">가</span><span class="ricon">밑</span></div><div class="rname">글꼴</div></div>
+    <div class="rgroup"><div class="ritems"><span class="ricon">≡</span><span class="ricon">≣</span><span class="ricon">⇥</span><span class="ricon">↵</span></div><div class="rname">맞춤</div></div>
+    <div class="rgroup"><div class="ritems"><span class="rsel">일반</span><span class="ricon">₩</span><span class="ricon">%</span><span class="ricon">.00</span></div><div class="rname">표시 형식</div></div>
+    <div class="rgroup"><div class="ritems"><span class="ricon">▦</span><span class="ricon">▩</span><span class="ricon">▨</span></div><div class="rname">스타일</div></div>
+    <div class="rgroup"><div class="ritems"><span class="ricon">＋</span><span class="ricon">－</span><span class="ricon">▤</span></div><div class="rname">셀</div></div>
+    <div class="rgroup last"><div class="ritems"><span class="ricon">Σ</span><span class="ricon">↕</span><span class="ricon">🔍</span></div><div class="rname">편집</div></div>
+  </div>
+
+  <!-- 수식 입력줄 -->
+  <div class="formula-bar">
+    <span class="namebox" id="namebox">A1</span>
+    <span class="fx" aria-hidden="true">fx</span>
+    <span class="formula" id="formula">=STOCK.BRIEF()</span>
+  </div>
+
+  <div id="stale" class="banner" role="status" hidden></div>
+  <section id="view" class="view">
+    <div class="sheet">
+      <div class="corner" aria-hidden="true"></div>
+      <div class="colhead" id="colhead" aria-hidden="true"></div>
+      <div class="rowhead" aria-hidden="true"><div class="rowhead-in" id="rowhead"></div></div>
+      <div id="cells" class="cells" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- 시트 탭 -->
+  <nav class="sheet-tabs" aria-label="시트">
+    <button type="button" data-tab="home" aria-current="page">홈</button>
+    <button type="button" data-tab="kr">국내</button>
+    <button type="button" data-tab="us">미국</button>
+    <button type="button" data-tab="perf">성과</button>
+    <button type="button" data-tab="paper">가상</button>
+    <button type="button" data-tab="logs">로그</button>
+    <span class="add" aria-hidden="true">＋</span>
+  </nav>
+
+  <!-- 상태 표시줄 -->
+  <div class="statusbar">
+    <span id="status-left">준비</span>
+    <button id="stamp" class="stamp" type="button" title="지금 새로고침">
+      <span class="dot" aria-hidden="true"></span><span id="stamp-text">—</span>
+    </button>
+    <span class="zoom" aria-hidden="true">─ ⊞ ＋ 100%</span>
+  </div>
+</div>
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
