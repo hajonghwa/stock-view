@@ -1429,7 +1429,7 @@
       if (!(r.w >= 2 && r.h >= 2)) return;
       const head = r.h >= 46 && r.w >= 56 ? 17 : 0;
       const gbox = el('div', { class: 'tm-group', style: `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px` });
-      if (head) put(gbox, el('div', { class: 'tm-ghead', text: `${g.name} ${fmtPct((g.size / total) * 100, 1)}`, title: `${g.name} · ${g.items.length}종목` }));
+      if (head) put(gbox, el('div', { class: 'tm-ghead', text: `${g.name} · 비중 ${fmtPct((g.size / total) * 100, 1)}`, title: `${g.name} · ${g.items.length}종목` }));
       const rects = squarify(g.items.map((it) => it.size), 1, head + 1, r.w - 2, r.h - head - 2);
       g.items.forEach((it, i) => {
         const t = rects[i];
@@ -1446,13 +1446,12 @@
         // 글자 크기: 이름이 칸 너비에 들어가는 크기(최대 24px). 너무 작아지면 10px 로 두고 말줄임.
         //   작은 칸(30×24px 미만)은 글자 없이 색만 — 누르거나 올리면 툴팁·상세가 열립니다.
         const fs = Math.max(10, Math.min(24, (w - 12) / Math.max(2, textEm(it.label)), h / 3.2));
-        const pct = fmtPct(v, colorKey === 'day' ? 2 : 1);
+        const weight = `비중 ${fmtPct(share, 1)}`;
         const pfs = Math.max(10, fs * 0.78);
         if (w >= 30 && h >= 24) {
           put(tile, el('span', { class: 'tm-name', text: it.label, style: `font-size:${fs.toFixed(1)}px` }),
-            h >= fs * 1.2 + pfs * 1.2 + 6 && textEm(pct) * pfs * 0.9 <= w - 6
-              ? el('span', { class: 'tm-val num', text: pct, style: `font-size:${pfs.toFixed(1)}px` }) : null,
-            w >= 130 && h >= 96 ? el('span', { class: 'tm-sub num', text: `${fmtPct(share, 1)} · ${it.currency === 'USD' ? fmtUsd(it.money) : fmtCompact(it.money)}` }) : null);
+            h >= fs * 1.2 + pfs * 1.2 + 6 && textEm(weight) * pfs * 0.9 <= w - 6
+              ? el('span', { class: 'tm-val num', text: weight, style: `font-size:${pfs.toFixed(1)}px` }) : null);
         }
         tile.addEventListener('pointermove', (ev) => showTip(ev, `${it.name} ${fmtPct(v, 2)}`,
           `${MAP_COLOR[colorKey]} · 비중 ${fmtPct(share, 1)} · 평가 ${fmtMoney(it.money, it.currency)} · ${colorKey === 'day' ? `수익률 ${fmtPct(it.pl, 1)}` : `오늘 ${fmtPct(it.day, 2)}`} · ${it.sector} · ${it.account}`));
@@ -1470,7 +1469,7 @@
       el('span', { class: 'muted', text: `색 = ${MAP_COLOR[colorKey]}` }),
       el('span', { class: 'tm-scale', role: 'img', 'aria-label': `${MAP_COLOR[colorKey]} 색 기준: 파랑 하락, 빨강 상승, ±${m}%에서 가장 진함` },
         steps.map((v) => { const c = divergingColor(v, m); return el('i', { style: `background:${c};color:${inkOn(c)}`, text: fmtPct(v, 0) }); })),
-      el('span', { class: 'muted', text: '칸 크기 = 평가금액 비중' }));
+      el('span', { class: 'muted', text: '칸 크기·숫자 = 표시 종목의 평가금액 비중 (현금 제외)' }));
   }
   // [10-16] 홈 화면 안의 보유 종목 히트맵 카드(예전 '히트맵' 시트를 홈으로 합침).
   //   버튼(범위·색·묶음)은 카드 안에, 요약은 한 줄로, 비중 순 표는 접어 둡니다(홈이 길어지지 않게).
