@@ -1107,13 +1107,21 @@
   const splitWith = (side, ...main) => el('div', { class: 'split' }, el('div', { class: 'main grid' }, main), side ? el('div', { class: 'side' }, side) : null);
 
   // [10-20] 신한 계좌 한 줄(조회 전용). 주식 평가금액만(예수금 제외) · 읽은 시각을 함께 적고, 오래되면 노랑.
+  function shinhanHealth(sh) {
+    if (!sh) return null;
+    const health = sh.health || {};
+    return el('div', { class: health.kind === 'normal' ? 'muted' : 'warn-text',
+      role: 'status', text: health.text || '신한 갱신 상태 확인 중' });
+  }
   function shinhanLine(sh) {
-    if (!sh || !sh.summary) return null;
+    if (!sh) return null;
+    if (!sh.summary) return shinhanHealth(sh);
     const s = sh.summary;
     const when = sh.updated_at ? ago(sh.updated_at).text : '읽은 적 없음';
     const tail = [`${when} 읽음`];
     if (sh.message) tail.push(sh.message);       // 정해 둔 말만 옴(예: '비밀번호 확인 필요 1개 (그 계좌는 이전 값)')
     return el('div', { class: 'muted', style: 'margin-top:4px' },
+      shinhanHealth(sh),
       `신한 주식 ${fmtWon(s.eval)} · ${s.count}종목${s.overseas ? `(해외 ${s.overseas})` : ''} · 손익 `,
       el('span', { class: cls(s.pl), text: isNum(s.pl) ? `${fmtWon(s.pl)} (${fmtPct(s.pl_rate)})` : NONE }),
       ' · ', el('span', { class: sh.stale ? 'warn-text' : '', text: tail.join(' · ') }));
@@ -1490,7 +1498,7 @@
       .sort((a, b) => b.size - a.size);
     const currency = scope === 'US' ? 'USD' : 'KRW';
     if (!items.length) {
-      return card('보유 종목 히트맵', null, controls,
+      return card('보유 종목 히트맵', null, controls, shinhanHealth(d.shinhan),
         empty(scope === 'all' && !fx ? '환율을 받지 못해 전체 지도를 그릴 수 없습니다. 국내·미국을 따로 보세요.' : '보유 종목이 없습니다'));
     }
     const total = items.reduce((a, it) => a + it.size, 0);
@@ -1548,7 +1556,7 @@
     const lost = noPrice.concat((shs.unpriced || []).filter((n) => !noPrice.includes(n)));
     if (lost.length) notes.push(`시세 없음(지도에서 뺌): ${lost.join(', ')}`);
     queueMicrotask(() => treemap(host, groups, total, { colorKey, selected: selId, onPick: pick }));
-    return card('보유 종목 히트맵', `${by === 'sector' ? '업종별' : '계좌별'} · 칸을 누르면 일봉`, controls, summary, host, mapLegend(colorKey),
+    return card('보유 종목 히트맵', `${by === 'sector' ? '업종별' : '계좌별'} · 칸을 누르면 일봉`, controls, shinhanHealth(d.shinhan), summary, host, mapLegend(colorKey),
       notes.length ? el('div', { class: 'chart-note', text: notes.join(' · ') }) : null,
       el('details', { class: 'tm-table' }, el('summary', { text: `비중 순 표 (${items.length}종목)` }), dense([
         { label: '종목', lead: true, cell: (it) => [chip(it.market, it.market === 'US' ? '' : 'idx'), ' ', el('span', { class: 'sym', text: it.market === 'US' ? it.symbol : it.name })] },
