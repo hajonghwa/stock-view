@@ -1260,12 +1260,22 @@
   // [09-28 화면 정리] 혼합1 이번 주 계획. 예전 점수 순위·점수 후보 대신 실제로 사고파는 목록을 보여 줍니다.
   // [10-07] 국내 규칙 문구는 PC 프로그램이 장부에 남긴 실제 규칙(plan.rule)을 씁니다(예전 문구는 '12-1개월' 뿐이었음).
   //   시장 필터 판정과, 그 때문에 사지 않은 종목(plan.buy_blocked)도 함께 보여 줍니다.
+  // [10-27] 미국 규칙 B · VIX 계단 설명 한 줄
+  function usLadderText(l) {
+    if (!l) return 'VIX 계단';
+    const steps = (l.steps || []).map(([v, p]) => `${fmtNum(v)} 이상 ${fmtPct(p, 0)}`).join(' · ');
+    const now = isNum(l.target) ? `지금 주식 ${fmtPct(l.target, 0)} · ${l.park || 'SGOV'} ${fmtPct(100 - l.target, 0)}` : '오늘 비중 아직 없음';
+    const vix = isNum(l.vix) ? ` (전날 VIX ${fmtNum(l.vix, 1, 1)}${l.vix_day ? ` · ${String(l.vix_day).slice(5)}` : ''}${l.fresh === false ? ' · 최신 아님' : ''})` : '';
+    return `${now}${vix} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤`;
+  }
+
   function h1PlanCard(plan, market, pick) {
     const cur = market === 'US' ? 'USD' : 'KRW';
-    const title = market === 'US' ? '미국 혼합1 이번 주 계획' : '국내 혼합1 이번 주 계획';
+    const isB = market === 'US' && !!plan && plan.rule === 'B';
+    const title = market === 'US' ? `미국 혼합1 이번 ${isB ? '달' : '주'} 계획` : '국내 혼합1 이번 주 계획';
     if (!plan || !plan.week) return card(title, '아직 점검 전', empty('그 주 첫 거래일 종가 매매(국내 15:18 · 미국 첫 장) 때 계획을 세웁니다'));
     const name = (r) => [el('span', { class: 'sym', text: r.name || r.symbol }), r.held ? chip('보유', 'core') : null];
-    const sub = `${plan.day ? String(plan.day).slice(5) : plan.week} ${plan.monthly ? '월 교체' : '주간 점검'} · 종목당 ${fmtMoney(plan.slot, cur)}`
+    const sub = `${plan.day ? String(plan.day).slice(5) : plan.week} ${isB ? '월 점검 · 규칙 B' : (plan.monthly ? '월 교체' : '주간 점검')} · 종목당 ${fmtMoney(plan.slot, cur)}`
       + (isNum(plan.ranked) ? ` · 순위 ${fmtNum(plan.ranked)}종목` : '');
     const list = (rows, extra) => dense([
       { label: '종목', lead: true, cell: (r) => name(r) },
@@ -1276,7 +1286,11 @@
     // 손절은 늘 '고점 대비 하락' 이라 설정 부호(−20 / 20)와 관계없이 −로 씁니다.
     const stop = isNum(plan.stop) && plan.stop !== 0 ? `고점 대비 ${fmtPct(-Math.abs(plan.stop), 0)} 손절` : '고점 대비 손절 끔';
     const keep = isNum(plan.keep) ? fmtPct(plan.keep, 0) : NONE;
-    const rules = market === 'US'
+    const rules = isB
+      ? [['순위', '6-1개월 수익률'],
+         ['매달 첫 장', `순위 상위 ${keep} 밖·자격 상위 10 밖이면 교체 · 보유 종목은 100일선 아래여도 유지(새로 살 때만 100일선 위) · ${stop}`],
+         ['주식 비중', usLadderText(plan.ladder)]]
+      : market === 'US'
       ? [['순위', '6-1개월 수익률'],
          ['매주 첫 장', `자격 잃음·순위 상위 ${keep} 밖이면 매도 · 월 첫 점검은 상위 10 밖 교체 · ${stop}(장중)`
            + (plan.market_filter === true ? ' · 동일가중 지수 100일선 아래면 신규 매수 멈춤' : '')]]
@@ -1295,7 +1309,7 @@
       buy.length ? list(buy, [{ label: '구분', cell: () => '매수' }]) : null,
       left.length ? list(left, [{ label: '구분', cell: () => '다음 종가에 재시도' }]) : null,
       blocked.length ? list(blocked, [{ label: '구분', cell: () => '시장 필터로 이번 주 안 삼' }]) : null,
-      !sell.length && !buy.length && !left.length && !blocked.length ? empty('이번 주 매도·매수 없음') : null);
+      !sell.length && !buy.length && !left.length && !blocked.length ? empty(isB ? '이번 달 매도·매수 없음' : '이번 주 매도·매수 없음') : null);
   }
 
   // ------------------------------------------------------------------ 화면: 미국
@@ -1324,7 +1338,7 @@
       { label: '수익률', right: true, tone: (h) => cls(h.rate), cell: (h) => fmtPct(isNum(h.rate) ? h.rate * 100 : null) },
       (d.rules || {}).us_h1 && !holds.some((h) => isNum(h.score)) ? null
         : { label: '점수', right: true, cell: (h) => (isNum(h.score) ? `${isNum(h.entry) ? h.entry + '→' : ''}${h.score}` : '—') },
-      { label: '손절까지', right: true, cell: (h) => (h.bot && isNum(h.stop_gap) ? fmtPct(h.stop_gap, 1) : '봇 미관리') },
+      { label: '손절까지', right: true, cell: (h) => (h.bot ? (isNum(h.stop_gap) ? fmtPct(h.stop_gap, 1) : '손절 없음') : '봇 미관리') },
     ].filter(Boolean), holds, { onPick: pick, selected: S.pick, key: (h) => `US:${h.symbol}` }) : empty('보유 종목이 없습니다')));
     if ((d.rules || {}).us_h1) {
       out.push(h1PlanCard(us.h1, 'US', pick));
