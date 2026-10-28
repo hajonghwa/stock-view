@@ -1230,6 +1230,7 @@
       ], holds, { onPick: pick, selected: S.pick, key: (h) => `KR:${h.symbol}` }) : empty('보유 종목이 없습니다')));
     const rules = d.rules || {};
     if (rules.kr_h1) out.push(h1PlanCard(d.kr_h1, 'KR', pick));
+    if (rules.kr_h1) out.push(rankNowCard((d.rank_now || {}).kr, 'KR', pick));
     const watch = d.watchlist || [];
     if (rules.kr_watch_buy !== false) out.push(card('눌림목 관찰목록', `${watch.length}종목 · 전일 종가 기준`, watch.length ? dense([
       // 지지선이 무엇인지가 핵심입니다. 진입 방식 이름에서 선 이름만 뽑습니다.
@@ -1267,6 +1268,32 @@
     const now = isNum(l.target) ? `지금 주식 ${fmtPct(l.target, 0)} · ${l.park || 'SGOV'} ${fmtPct(100 - l.target, 0)}` : '오늘 비중 아직 없음';
     const vix = isNum(l.vix) ? ` (전날 VIX ${fmtNum(l.vix, 1, 1)}${l.vix_day ? ` · ${String(l.vix_day).slice(5)}` : ''}${l.fresh === false ? ' · 최신 아님' : ''})` : '';
     return `${now}${vix} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤`;
+  }
+
+  // [10-28] 지금 실계좌 규칙 순위(국내 혼합1 · 미국 6-1개월). PC 프로그램 '국내 순위'·'미국 순위'와 같은 자료.
+  function nowState(r) {
+    if (r.held) return ['보유', 'core'];
+    if (!r.ok) return [String(r.why || '자격 없음').replace(/\s*[(（].*$/, ''), ''];      // 괄호 속 가격은 빼고 짧게
+    if (r.buyable === false) return ['신고가 아님', 'warn'];
+    return ['살 수 있음', 'idx'];
+  }
+  function rankNowCard(v, market, pick) {
+    const rows = (v && v.rows) || [];
+    const title = market === 'US' ? '미국 순위 · 지금 규칙(6-1개월)' : '국내 순위 · 지금 규칙(혼합1)';
+    if (!rows.length) return card(title, market === 'US' ? '채점 뒤 보입니다' : '거래일 15:35 뒤 하루 한 번 계산', empty('아직 순위가 없습니다'));
+    const sub = [v.day ? String(v.day).slice(5) : null, isNum(v.ranked) ? `${fmtNum(v.ranked)}종목 중 상위 ${rows.length}` : null,
+      isNum(v.keep_n) ? `${fmtNum(v.keep_n)}위까지 유지` : null].filter(Boolean).join(' · ');
+    const cols = [
+      { label: '#', right: true, cell: (r) => r.rank },
+      { label: '종목', lead: true, cell: (r) => el('span', { class: 'sym', text: market === 'US' ? r.symbol : (r.name || r.symbol) }) },
+      { label: '상태', cell: (r) => { const [t, k] = nowState(r); return chip(t, k); } },
+      { label: market === 'US' ? '6-1' : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) },
+      market === 'KR' ? { label: '순위점수', right: true, cell: (r) => fmtNum(r.rank_pct, 1, 1) } : null,
+      market === 'KR' ? { label: '17점', right: true, cell: (r) => (isNum(r.score17) ? r.score17 : NONE) } : null,
+    ].filter(Boolean);
+    return card(title, sub, market === 'KR' && v.rule ? el('p', { class: 'muted', text: `순위 = ${v.rule}` }) : null,
+      el('details', {}, el('summary', { text: '펼치기' }),
+        dense(cols, rows, { onPick: pick, selected: S.pick, key: (r) => `${market}:${r.symbol}` })));
   }
 
   function h1PlanCard(plan, market, pick) {
@@ -1342,6 +1369,7 @@
     ].filter(Boolean), holds, { onPick: pick, selected: S.pick, key: (h) => `US:${h.symbol}` }) : empty('보유 종목이 없습니다')));
     if ((d.rules || {}).us_h1) {
       out.push(h1PlanCard(us.h1, 'US', pick));
+      out.push(rankNowCard((d.rank_now || {}).us, 'US', pick));
       return [splitWith(pickPanel(d, 'US'), ...out)];
     }
     const cand = us.candidates || [];
@@ -1723,10 +1751,11 @@
     queueMicrotask(() => lineChart(host, (pick.equity || []).filter((pt) => Array.isArray(pt)).map(([date, v]) => ({ x: date, y: v })),
       { currency: pick.currency, height: 180, label: pick.label }));
 
-    const paperMixed = new Set((pick.holdings || []).map((h) => (h.source === 'watch' ? 'watch' : 'core'))).size > 1;
+    // [10-28] 종목마다 모멘텀·눌림목 칩을 늘 붙입니다(예전엔 섞여 있을 때만).
+    const stratChip = (r) => chip(r.strategy || (r.source === 'watch' ? '눌림목' : '모멘텀'), r.source === 'watch' || /눌림목/.test(r.strategy || '') ? 'watch' : 'core');
     out.push(card(`${pick.label} 보유`, `${fmtNum(pick.count)}종목 · 현금 ${fm(pick, pick.cash)}`,
       (pick.holdings || []).length ? dense([
-        { label: '종목', lead: true, cell: (h) => [paperMixed ? chip(h.source === 'watch' ? '눌림목' : '모멘텀', h.source === 'watch' ? 'watch' : 'core') : null, paperMixed ? ' ' : null, el('span', { class: 'sym', text: h.name || h.symbol })] },
+        { label: '종목', lead: true, cell: (h) => [stratChip(h), ' ', el('span', { class: 'sym', text: h.name || h.symbol })] },
         { label: '수량', right: true, cell: (h) => fmtNum(h.qty, 4, 0) },
         { label: '현재가', right: true, cell: (h) => fmtPrice(h.price, pick.market) },
         { label: '평단', right: true, cell: (h) => fmtPrice(h.avg, pick.market) },
@@ -1734,6 +1763,17 @@
         { label: '수익률', right: true, tone: (h) => cls(h.pl_rate), cell: (h) => fmtPct(h.pl_rate) },
         { label: '비중', right: true, cell: (h) => (pick.value > 0 ? fmtPct(h.value / pick.value * 100, 1) : NONE) },
       ], pick.holdings) : empty('아직 담은 종목이 없습니다')));
+
+    const recent = pick.recent || [];
+    out.push(card(`${pick.label} 최근 매매`, `최근 ${recent.length}건 · 전략별`,
+      recent.length ? dense([
+        { label: '날짜', lead: true, cell: (r) => String(r.date || '').slice(5) },
+        { label: '종목', cell: (r) => [stratChip(r), ' ', el('span', { class: 'sym', text: r.name || r.symbol })] },
+        { label: '구분', cell: (r) => (r.side === 'BUY' ? '매수' : r.side === 'SELL' ? '매도' : r.side || '') },
+        { label: '가격', right: true, cell: (r) => fmtPrice(r.price, pick.market) },
+        { label: '수익률', right: true, tone: (r) => cls(r.realized_pct), cell: (r) => (isNum(r.realized_pct) ? fmtPct(r.realized_pct, 1) : NONE) },
+        { label: '사유', cell: (r) => r.tag || '' },
+      ], recent) : empty('아직 매매가 없습니다')));
 
     out.push(card(`${pick.label} 매수 안 한 이유`, `${(pick.skipped || []).length}건`,
       (pick.skipped || []).length ? dense([
@@ -1743,10 +1783,8 @@
       ], pick.skipped) : empty('막힌 종목이 없습니다')));
 
     out.push(card('읽는 법', null, el('div', { class: 'note' },
-      el('p', { text: '가상계좌는 실계좌와 규칙이 다를 수 있습니다. 실계좌 국내는 혼합1(12-1개월), 미국은 혼합1(6-1개월)입니다.' }),
-      el('p', { text: '국내 기존점수·미국 기존점수 = 예전 점수 규칙 비교용 · 국내 혼합1(6-1) = 미국 규칙을 국내 종목에 적용한 비교용.' }),
-      el('p', { text: '같은 규칙끼리는 자본금만 다릅니다. 갈리는 곳은 1주 단위, 한 종목 비중 상한, 한 칸 최소 금액, 예수금입니다.' }),
-      el('p', { class: 'muted', text: '하루 1회 종가로만 판정하는 근사입니다. 장중 손절·장중 익절은 다음 날 종가에 걸리고, 눌림목은 그날 일봉의 고가·거래량으로 판정해 진입선 가격에 체결한 것으로 봅니다. VI·유의종목은 통과로 봅니다.' }))));
+      el('p', { text: '기존점수 = 예전 점수 규칙(모멘텀 + 눌림목) · 혼합1(6-1) = 미국 규칙을 국내에 적용. 실계좌 규칙과 다른 비교용입니다.' }),
+      el('p', { class: 'muted', text: '하루 1회 종가로 계산한 근사(장중 손절·VI는 재현 안 됨).' }))));
     return out;
   }
 
