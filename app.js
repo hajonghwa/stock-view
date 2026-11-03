@@ -1488,7 +1488,8 @@
       // [11-03 웹 고도화 14] 봇 체결만으로 계산한 수익률 vs S&P500(입금·직접 매매가 섞이지 않음) · 평가금액 추이는 두 번째 단추
       out.push(compareCard({ title: '봇 vs S&P500', points: us.vs_index.map((p) => ({ ...p, kospi: p.index })), idx: 'S&P500', mode: 'usAssetMode',
         sub: '뉴욕 날짜 · 입금 영향 없음',
-        note: '봇 = 봇이 산 종목(SGOV 포함)의 시간가중 수익률 · 현금·입금·직접 매매는 넣지 않음',
+        note: '봇 = 봇이 산 종목(SGOV 포함)의 시간가중 수익률 · 현금·입금·직접 매매는 넣지 않음'
+          + ({ tr: ' · SGOV 는 분배금 반영 종가', price: ' · SGOV 는 가격만(분배금 자료 없음)', none: ' · SGOV 일봉 없음(체결가로 둠)' }[(us.vs_index.at(-1) || {}).park] || ''),
         other: { label: '평가금액', note: '보유 평가금액(현금 제외) · 입금·매수로도 늘어남 · 봇 성과 아님', currency: 'USD', label2: '미국 평가금액', points: valuePoints } }));
     } else {
       const chartHost = el('div', { class: 'chart' });
