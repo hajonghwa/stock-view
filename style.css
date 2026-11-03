@@ -696,3 +696,35 @@ details.tm-table > .table-wrap { margin-top: 6px; }
 
 /* [10-20] 신한 계좌 한 줄: 오래된 자료 표시 */
 .warn-text { color: var(--warn-ink); background: var(--warn-bg); border-radius: 4px; padding: 0 4px; }
+
+/* ---------------------------------------------------------------- [11-03 웹 고도화] */
+/* 8 · 휴대폰에서 숨기는 칸(미국 회사 이름 등 — 티커로 충분) */
+@media (max-width: 720px) { .wide-only { display: none; } }
+/* 10 · 오른쪽 칸: 종목을 안 골랐으면 계획·순위·일정 카드(idle). 휴대폰에서는 아래쪽 */
+.split > .side.idle { order: 1; position: static; }
+@media (min-width: 1040px) {
+  .split.solo { grid-template-columns: minmax(0, 1fr); }
+  .split > .side.idle { position: static; }
+  .side .grid.two { grid-template-columns: minmax(0, 1fr); }
+}
+/* 3 · 전체 자산 계좌별 */
+.asset-parts { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--ink-2); margin: 2px 0 4px; }
+.asset-parts .k { color: var(--muted); }
+.asset-parts b { color: var(--ink); font-weight: 600; }
+/* 9 · 안내 펼치기 */
+details.note-more { font-size: 12.5px; color: var(--ink-2); margin: 2px 0 0; }
+details.note-more > summary { font-size: 12.5px; margin-top: 2px; }
+details.note-more ul { margin: 4px 0 0; padding-left: 18px; }
+details.note-more li { margin: 1px 0; line-height: 1.45; }
+/* 16 · 진행 중인 일정(미국 장) */
+.timeline .running { font-weight: 700; color: var(--accent-ink); }
+.timeline .running span:last-child::before { content: "● "; color: var(--good); }
+/* 18 · 자료가 오래되면 숫자를 흐리게(회색 띠와 함께) */
+.app.is-stale #cells { opacity: .55; filter: grayscale(.6); transition: opacity .2s; }
+/* 17 · 손가락으로 누르는 화면에서는 누르는 곳을 44px 이상으로(칸 모양은 그대로, 여백만 키움) */
+@media (pointer: coarse) {
+  .seg button, .chips button, .subtabs button, .sheet-tabs button, .small-button, .win-btn, .stamp,
+  .pick-head .close, details > summary { min-height: 44px; }
+  .seg button, .chips button { padding-top: 0; padding-bottom: 0; }
+  details > summary { display: flex; align-items: center; }
+}

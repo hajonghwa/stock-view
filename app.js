@@ -19,7 +19,8 @@
     pick: null,          // 'KR:005930' - 고른 종목
     pickSrc: null,       // [10-20] 'SH' 면 히트맵의 신한 칸에서 고름
     sub: 'chart',        // 차트 아래 탭: chart | rule | trade | data
-    assetMode: 'bot', assetPeriod: 'all',
+    assetMode: 'bot', assetPeriod: 'all', usAssetMode: 'bot',     // [11-03] 미국 '봇 vs S&P500'
+    perfScope: 'now',    // [11-03] 성과 탭: 'now' 지금 규칙만 · 'all' 전체
     mapScope: 'all', mapColor: 'day', mapGroup: 'sector',   // [10-16] 홈 히트맵: 범위·색·묶음
   };
 
@@ -302,6 +303,9 @@
     const stamp = $('#stamp');
     stamp.classList.toggle('stale', minutes > staleAt && minutes <= 60);
     stamp.classList.toggle('dead', minutes > 60);
+    // [11-03 웹 고도화 18] 자료가 오래되면 숫자를 흐리게(띠만으로는 옛 숫자를 지금 값으로 읽기 쉬움)
+    const app = $('#app');
+    if (app) app.classList.toggle('is-stale', minutes > staleAt);
     const hm = (d.generated_at || '').slice(11, 16);
     $('#stamp-text').textContent = `${hm} · ${text}`;
     const banner = $('#stale');
@@ -420,11 +424,19 @@
     host.append(root);
   }
   // Keep indicator indices attached to the same candle, including missing-price filtering.
+  // [11-03 웹 고도화 15] 5·20·60일 이동평균은 자르기 전 전체 일봉으로 계산합니다(예전: 폰에서 70봉으로 자른 뒤 계산해
+  //   60일선이 마지막 11봉에만 그려졌음). 값이 없으면(앞쪽 일봉 부족) null.
   function chartWindow(bars, ma100 = [], hi60 = [], narrow = false) {
     let items = (bars || []).map((bar, i) => ({ bar, ma: (ma100 || [])[i], high: (hi60 || [])[i] }))
       .filter((p) => Array.isArray(p.bar) && isNum(p.bar[4]) && p.bar[4] > 0);
-    if (narrow && items.length > 70) items = items.slice(-70);
-    return { rows: items.map((p) => p.bar), ma100: items.map((p) => p.ma), hi60: items.map((p) => p.high) };
+    const closes = items.map((p) => p.bar[4]);
+    const avg = (n) => closes.map((_, i) => (i + 1 < n ? null : closes.slice(i - n + 1, i + 1).reduce((a, v) => a + v, 0) / n));
+    const ma = { 5: avg(5), 20: avg(20), 60: avg(60) };
+    let from = 0;
+    if (narrow && items.length > 70) from = items.length - 70;
+    items = items.slice(from);
+    return { rows: items.map((p) => p.bar), ma100: items.map((p) => p.ma), hi60: items.map((p) => p.high),
+             ma5: ma[5].slice(from), ma20: ma[20].slice(from), ma60: ma[60].slice(from) };
   }
 
   // 일봉 캔들 + 거래량 + PC가 보낸 매매선. bars = [[날짜, 시, 고, 저, 종, 거래량], ...]
@@ -446,7 +458,7 @@
     const candleHi = Math.max(...highs, ...rows.map((b) => b[4]));
     const stopLevels = market === 'KR' ? (levels || []).filter((v) => v.key === 'stop' && isNum(v.price) && v.price > 0) : [];
     const stopsInRange = stopLevels.filter((v) => v.price >= candleLo * .75 && v.price <= candleHi * 1.25);
-    const curveValues = [...view.ma100, ...view.hi60].filter((v) => isNum(v) && v > 0);
+    const curveValues = [...view.ma100, ...view.hi60, ...view.ma20, ...view.ma60].filter((v) => isNum(v) && v > 0);
     const lo = Math.min(candleLo, ...curveValues, ...stopsInRange.map((v) => v.price), ...(isNum(avg) ? [avg] : []));
     const hi = Math.max(candleHi, ...curveValues, ...stopsInRange.map((v) => v.price), ...(isNum(avg) ? [avg] : []));
     const pad = Math.max((hi - lo) * 0.04, hi * 0.001);
@@ -467,15 +479,9 @@
       // 현재가 표시와 겹치는 눈금 글씨는 생략합니다.
       if (Math.abs(py(t) - py(lastClose)) > 11) root.append(svg('text', { x: W - R + 6, y: py(t) + 4 }, axisText(t)));
     }
-    const mean = (i, n) => {
-      if (i + 1 < n) return null;
-      let sum = 0;
-      for (let k = i - n + 1; k <= i; k++) sum += rows[k][4];
-      return sum / n;
-    };
-    for (const [n, klass] of [[5, 'ma5'], [20, 'ma20'], [60, 'ma60']]) {
+    for (const klass of ['ma5', 'ma20', 'ma60']) {
       const pts = [];
-      for (let i = 0; i < rows.length; i++) { const v = mean(i, n); if (v !== null) pts.push(`${cx(i).toFixed(1)},${py(v).toFixed(1)}`); }
+      (view[klass] || []).forEach((v, i) => { if (isNum(v)) pts.push(`${cx(i).toFixed(1)},${py(v).toFixed(1)}`); });
       if (pts.length > 1) root.append(svg('polyline', { points: pts.join(' '), class: klass }));
     }
     const curve = (values, klass, stepped) => {
@@ -587,7 +593,10 @@
       el('span', { class: 'muted', text: `${rows.length}봉 · ${rows[0][0]} ~ ${lastRow[0]}` })));
   }
 
-  // Pure calculations: use actual recorded values; never adjust suspected cash flows.
+  // Pure calculations: 차트 계산(PC 가 보낸 값을 그대로 씀).
+  //   [11-03 웹 고도화 1] 국내 bot 은 PC 가 직접매매 예산 변경·입출금을 뺀 시간가중 지수로 보냅니다(flow = 뺀 금액).
+  //   옛 자료(flow 칸 없음)는 운용자산 그대로이며, 하루 10% 넘게 튄 날만 '의심' 으로 표시합니다(보정은 하지 않음).
+  //   미국(봇 vs S&P500)은 봇 체결로만 계산한 지수라 입금이 섞이지 않습니다. 지수 값은 kospi 칸에 넣어 같은 계산을 씁니다.
   function comparePoints(points) {
     return (points || []).filter((p) => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date)
       && isNum(p.bot) && p.bot > 0 && isNum(p.kospi) && p.kospi > 0).slice().sort((a, b) => a.date.localeCompare(b.date));
@@ -607,10 +616,19 @@
       return { date: p.date, bot: (p.bot / botPeak - 1) * 100, kospi: (p.kospi / kospiPeak - 1) * 100 };
     });
   }
-  function flowSuspect(points) {
-    const data = comparePoints(points);
-    return data.filter((p, i) => i > 0 && Math.abs((p.bot / data[i - 1].bot - 1) * 100) > 10
-      && Math.abs((p.kospi / data[i - 1].kospi - 1) * 100) <= 3).map((p) => p.date);
+  // {날짜: 안내 글} · 보정한 날(flow ≠ 0) 또는 옛 자료의 의심 날
+  function flowFlags(points) {
+    const data = comparePoints(points), out = {};
+    if (data.some((p) => 'flow' in p)) {
+      data.forEach((p) => { if (isNum(p.flow) && p.flow !== 0) out[p.date] = `예산 변경·입출금 ${fmtWon(p.flow)} · 그날 수익률에서 뺌`; });
+      return out;
+    }
+    data.forEach((p, i) => {
+      if (i > 0 && Math.abs((p.bot / data[i - 1].bot - 1) * 100) > 10 && Math.abs((p.kospi / data[i - 1].kospi - 1) * 100) <= 3) {
+        out[p.date] = '예산 변경·입출금 의심 — 확인 필요';
+      }
+    });
+    return out;
   }
   function yearlyCompare(points) {
     const data = comparePoints(points), dd = yearDrawdown(data), years = [...new Set(data.map((p) => p.date.slice(0, 4)))];
@@ -639,7 +657,7 @@
     const cutoff = compareCutoff(data[data.length - 1].date, period);
     return data.filter((p) => p.date >= cutoff);
   }
-  function compareChart(host, points, suspected, drawdown = false) {
+  function compareChart(host, points, flags, drawdown = false, idx = '코스피') {
     host.replaceChildren();
     if (points.length < 2) { host.append(empty('그래프를 그릴 자료가 아직 부족합니다')); return; }
     const W = chartWidth(host), H = drawdown ? 90 : 200, L = 40, R = drawdown ? 12 : 49, T = 15, B = 23;
@@ -648,7 +666,7 @@
     const min = ticks[0], max = ticks[ticks.length - 1];
     const x = (i) => L + i * (W - L - R) / (points.length - 1);
     const y = (v) => T + (max - v) * (H - T - B) / (max - min || 1);
-    const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': drawdown ? '그 해 안 최고 대비 하락' : '봇 vs 코스피 · 첫 기록 100' });
+    const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': drawdown ? '그 해 안 최고 대비 하락' : `봇 vs ${idx} · 첫 기록 100` });
     for (const tick of ticks) {
       root.append(svg('line', { x1: L, x2: W - R, y1: y(tick), y2: y(tick), class: tick === (drawdown ? 0 : 100) ? 'axis-line' : 'grid-line' }));
       root.append(svg('text', { x: L - 5, y: y(tick) + 4, 'text-anchor': 'end' }, drawdown ? fmtPct(tick, 0) : fmtNum(tick, 0)));
@@ -669,9 +687,9 @@
       }
     }
     if (!drawdown) points.forEach((p, i) => {
-      if (!suspected.includes(p.date)) return;
-      const show = (ev) => showTip(ev, p.date, '예산 변경·입출금 의심 — 확인 필요');
-      const group = svg('g', { class: 'flow-flag', role: 'button', 'aria-label': '예산 변경·입출금 의심 — 확인 필요' });
+      if (!flags[p.date]) return;
+      const show = (ev) => showTip(ev, p.date, flags[p.date]);
+      const group = svg('g', { class: 'flow-flag', role: 'button', 'aria-label': `${p.date} ${flags[p.date]}` });
       group.append(svg('text', { x: x(i), y: Math.max(12, y(p.bot) - 9), 'text-anchor': 'middle' }, '!'),
         svg('rect', { x: x(i) - 9, y: Math.max(0, y(p.bot) - 22), width: 18, height: 22, class: 'hit' }));
       group.addEventListener('pointerdown', show); group.addEventListener('pointermove', show); group.addEventListener('pointerleave', hideTip);
@@ -684,13 +702,12 @@
       const box = root.getBoundingClientRect(), px = (ev.clientX - box.left) * W / box.width;
       const i = Math.max(0, Math.min(points.length - 1, Math.round((px - L) * (points.length - 1) / (W - L - R)))), p = points[i];
       cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
-      if (!drawdown && suspected.includes(p.date)) {
-        showTip(ev, p.date, '예산 변경·입출금 의심 — 확인 필요');
-      } else if (drawdown) {
-        showTip(ev, p.date, `그 해 안 최고 대비 · 봇 ${fmtPct(Math.abs(p.bot), 1)} 하락 · 코스피 ${fmtPct(Math.abs(p.kospi), 1)} 하락`);
+      if (drawdown) {
+        showTip(ev, p.date, `그 해 안 최고 대비 · 봇 ${fmtPct(Math.abs(p.bot), 1)} 하락 · ${idx} ${fmtPct(Math.abs(p.kospi), 1)} 하락`);
       } else {
         showTip(ev, `${p.date.slice(5)} · 봇 ${fmtNum(p.bot, 1)} (${fmtPct(p.bot - 100, 1)})`,
-          `코스피 ${fmtNum(p.kospi, 1)} (${fmtPct(p.kospi - 100, 1)}) · 봇이 ${gapText(p.bot - p.kospi, '코스피 기준')}`);
+          `${idx} ${fmtNum(p.kospi, 1)} (${fmtPct(p.kospi - 100, 1)}) · 봇이 ${gapText(p.bot - p.kospi, `${idx} 기준`)}`
+          + (flags[p.date] ? ` · ${flags[p.date]}` : ''));
       }
     };
     root.append(cross, hit);
@@ -700,23 +717,26 @@
     if (drawdown) {
       const worst = points.reduce((a, p) => p.bot < a.bot ? p : a);
       const indexWorst = points.reduce((a, p) => p.kospi < a.kospi ? p : a);
-      put(host, el('div', { class: 'drawdown-caption', text: `보이는 기간 · 봇 ${fmtPct(Math.abs(worst.bot), 1)} 하락 (${worst.date.slice(5)}) · 코스피 ${fmtPct(Math.abs(indexWorst.kospi), 1)} 하락 (${indexWorst.date.slice(5)})` }));
+      put(host, el('div', { class: 'drawdown-caption', text: `보이는 기간 · 봇 ${fmtPct(Math.abs(worst.bot), 1)} 하락 (${worst.date.slice(5)}) · ${idx} ${fmtPct(Math.abs(indexWorst.kospi), 1)} 하락 (${indexWorst.date.slice(5)})` }));
     }
   }
-  function assetCompareCard(kr) {
-    const data = comparePoints(kr.vs_index), body = el('div', { class: 'asset-compare' });
-    const article = card('봇 vs 코스피', '입출금 자동 보정 없음', body);
+  // [11-03] 봇 vs 지수 카드(국내 코스피 · 미국 S&P500 공용).
+  //   o = { title, points, idx, mode: S 의 상태 이름, sub, note, other: { label, note, points, currency, label2 } }
+  function compareCard(o) {
+    const data = comparePoints(o.points), body = el('div', { class: 'asset-compare' });
+    const article = card(o.title, o.sub, body);
+    const flags = flowFlags(data);
     const draw = () => {
       body.replaceChildren();
       const mode = el('div', { class: 'chips asset-controls', role: 'group', 'aria-label': '자산 차트 종류' });
-      for (const [key, name] of [['bot', '봇 vs 코스피'], ['account', '계좌 총액']]) {
-        put(mode, el('button', { type: 'button', text: name, 'aria-pressed': String(S.assetMode === key), onClick: () => { S.assetMode = key; draw(); } }));
+      for (const [key, name] of [['bot', o.title], ['account', o.other.label]]) {
+        put(mode, el('button', { type: 'button', text: name, 'aria-pressed': String(S[o.mode] === key), onClick: () => { S[o.mode] = key; draw(); } }));
       }
       put(body, mode);
-      if (S.assetMode === 'account') {
+      if (S[o.mode] === 'account') {
         const host = el('div', { class: 'chart' });
-        put(body, el('div', { class: 'chart-note', text: '입금·직접 산 종목 포함 · 봇 성과 아님' }), host);
-        queueMicrotask(() => lineChart(host, (kr.equity || []).map((p) => ({ x: p.date, y: p.value })), { currency: 'KRW', label: '계좌 자산' }));
+        put(body, el('div', { class: 'chart-note', text: o.other.note }), host);
+        queueMicrotask(() => lineChart(host, o.other.points, { currency: o.other.currency, label: o.other.label2 }));
         return;
       }
       if (data.length < 2) { put(body, empty('그래프를 그릴 자료가 아직 부족합니다')); return; }
@@ -732,29 +752,38 @@
       const visible = compareWindow(data, S.assetPeriod), normalized = rebase(visible), last = normalized[normalized.length - 1];
       const falls = yearDrawdown(data).filter((p) => visible.some((v) => v.date === p.date));
       const host = el('div', { class: 'chart' }), ddHost = el('div', { class: 'chart' });
-      put(body, periods, el('div', { class: 'compare-summary', text: `${visible[0].date.slice(5)} 이후 · 봇 ${fmtPct(last.bot - 100, 1)} · 코스피 ${fmtPct(last.kospi - 100, 1)} · 봇이 ${gapText(last.bot - last.kospi, '코스피 기준')}` }),
-        host, el('div', { class: 'legend compare-legend' }, el('span', { class: 'bot-value', text: '━ 봇' }), el('span', { class: 'index-value', text: '━ 코스피' }),
+      put(body, periods, el('div', { class: 'compare-summary', text: `${visible[0].date.slice(5)} 이후 · 봇 ${fmtPct(last.bot - 100, 1)} · ${o.idx} ${fmtPct(last.kospi - 100, 1)} · 봇이 ${gapText(last.bot - last.kospi, `${o.idx} 기준`)}` }),
+        o.note ? el('div', { class: 'chart-note', text: o.note }) : null,
+        host, el('div', { class: 'legend compare-legend' }, el('span', { class: 'bot-value', text: '━ 봇' }), el('span', { class: 'index-value', text: `━ ${o.idx}` }),
           el('span', { class: 'muted', text: '기간 첫 기록 = 100' })),
         el('div', { class: 'chart-note', text: '그 해 안 최고 대비 하락 · 해가 바뀌면 최고값을 새로 계산' }), ddHost,
         el('div', { class: 'yearly-compare' }, dense([
           { label: '연도', lead: true, cell: (r) => r.year },
           { label: '봇 수익률', right: true, cell: (r) => fmtPct(r.bot, 1) },
-          { label: '코스피', right: true, cell: (r) => fmtPct(r.kospi, 1) },
+          { label: o.idx, right: true, cell: (r) => fmtPct(r.kospi, 1) },
           { label: '차이', right: true, cell: (r) => gapText(r.gap, '') },
           { label: '봇 최대 하락', right: true, cell: (r) => `${fmtPct(Math.abs(r.botDD), 1)} 하락` },
-          { label: '코스피 최대 하락', right: true, cell: (r) => `${fmtPct(Math.abs(r.kospiDD), 1)} 하락` },
+          { label: `${o.idx} 최대 하락`, right: true, cell: (r) => `${fmtPct(Math.abs(r.kospiDD), 1)} 하락` },
         ], yearlyCompare(data))),
         el('div', { class: 'chart-note', text: `연도별 수익률·하락은 전체 기록 기준 · 첫해 ${data[0].date}부터 · 마지막 해 ${data[data.length - 1].date}까지` }));
-      queueMicrotask(() => { compareChart(host, normalized, flowSuspect(data)); compareChart(ddHost, falls, [], true); });
+      queueMicrotask(() => { compareChart(host, normalized, flags, false, o.idx); compareChart(ddHost, falls, {}, true, o.idx); });
     };
     draw();
     return article;
+  }
+  function assetCompareCard(kr) {
+    const adjusted = (kr.vs_index || []).some((p) => p && 'flow' in p);
+    return compareCard({ title: '봇 vs 코스피', points: kr.vs_index, idx: '코스피', mode: 'assetMode',
+      sub: adjusted ? '예산 변경·입출금 보정' : '입출금 자동 보정 없음',
+      note: adjusted ? '봇 = 운용자산의 시간가중 수익률 · 직접매매 예산 변경·입출금은 뺌(! 표시 날)' : null,
+      other: { label: '계좌 총액', note: '입금·직접 산 종목 포함 · 봇 성과 아님', currency: 'KRW', label2: '계좌 자산',
+        points: (kr.equity || []).map((p) => ({ x: p.date, y: p.value })) } });
   }
 
   // 조밀한 표. cols = [{key, label, right, lead, cell}]
   function dense(cols, rows, { onPick = null, selected = null, key = null } = {}) {
     return el('div', { class: 'table-wrap' }, el('table', { class: 'dense' },
-      el('thead', {}, el('tr', {}, cols.map((c) => el('th', { class: `${c.right ? 'r' : ''}${c.lead ? ' lead' : ''}`, text: c.label })))),
+      el('thead', {}, el('tr', {}, cols.map((c) => el('th', { class: `${c.right ? 'r' : ''}${c.lead ? ' lead' : ''}${c.wide ? ' wide-only' : ''}`, text: c.label })))),
       el('tbody', {}, rows.map((row) => {
         const id = key ? key(row) : null;
         return el('tr', {
@@ -762,7 +791,8 @@
           onClick: onPick ? () => onPick(row) : null,
         }, cols.map((c) => {
           const value = c.cell(row);
-          const node = el('td', { class: `${c.right ? 'r' : ''}${c.lead ? ' lead' : ''}${c.tone ? ' ' + (c.tone(row) || '') : ''}` });
+          // [11-03] c.wide = 휴대폰(좁은 화면)에서는 숨기는 칸(예: 미국 회사 이름 — 티커로 충분)
+          const node = el('td', { class: `${c.right ? 'r' : ''}${c.lead ? ' lead' : ''}${c.wide ? ' wide-only' : ''}${c.tone ? ' ' + (c.tone(row) || '') : ''}` });
           // 배열로 오는 칸(칩 + 이름 같은)에는 null 이 섞입니다. put 이 걸러 줍니다.
           put(node, Array.isArray(value) ? value : [value === null || value === undefined ? '—' : value]);
           return node;
@@ -868,7 +898,7 @@
     // [09-28 화면 정리] 혼합1은 예전 국면 점수를 쓰지 않습니다.
     // [10-07] 국내도 시장 필터가 있습니다(10-01 결정: 주간 점검 날 코스피 < 60일선이면 그 주 신규 매수 멈춤).
     //   판정은 주간 점검 때 장부(kr_h1_book.json)에 남긴 값을 그대로 씁니다. 미국은 동일가중 지수 100일선 필터.
-    const mk = rules.kr_h1 ? krMarket(d.kr_h1) : null;
+    const mk = rules.kr_h1 ? krMarket(d.kr_h1, (d.rank_now || {}).kr) : null;
     return el('div', { class: 'pills' },
       pill('국내 매매', st.kr_trading), pill('미국 매매', st.us_trading),
       rules.kr_h1 ? (mk ? el('span', { class: `pill ${mk.state === 'block' ? 'paused' : mk.state === 'ok' ? 'on' : ''}`, title: mk.text }, el('span', { class: 'dot' }), mk.short) : null)
@@ -877,7 +907,7 @@
   }
   // [10-07] 국내 시장 필터 판정(주간 점검 때 장부에 남긴 값). 모르면 null.
   //   { state: 'ok' | 'block' | 'off', short: 알약 글자, text: '코스피 … → 이번 주 새로 삼', when: '10-05 점검' }
-  function krMarket(plan) {
+  function krMarket(plan, today = null) {
     if (!plan || !plan.week) return null;
     const when = plan.day ? `${String(plan.day).slice(5)} 점검` : '';
     if (plan.market_days === 0) return { state: 'off', short: '국내 시장 필터 꺼짐', text: '코스피와 관계없이 새로 삼', when };
@@ -889,11 +919,20 @@
         + `${fmtPct(Math.abs(plan.market_gap), 1)} ${plan.market_gap >= 0 ? '위' : '아래'}`;
     }
     const verdict = block ? '이번 주 새로 사지 않음 (매도·손절은 그대로)' : '이번 주 새로 삼';
+    // [11-03 웹 고도화 5] 점검 날 값과 함께 오늘(순위 저장 때) 값 · 막힌 주면 주중 회복 매수까지 남은 폭
+    let now = '';
+    const t = today || {};
+    if (t.day && plan.day && t.day > plan.day && isNum(t.market_index) && isNum(t.market_ma) && isNum(t.market_gap)) {
+      now = ` · 오늘(${String(t.day).slice(5)}) 코스피 ${fmtNum(t.market_index, 0)} · ${t.market_ma_days || plan.market_ma_days}일선 ${fmtNum(t.market_ma, 0)}보다 `
+        + `${fmtPct(Math.abs(t.market_gap), 1)} ${t.market_gap >= 0 ? '위' : '아래'}`;
+      if (block) now += t.market_gap >= 0 ? ' → 주중 회복 매수 대상(다음 종가 매매)'
+        : ` → 주중 회복 매수까지 ${fmtPct((t.market_ma / t.market_index - 1) * 100, 1)} 더 올라야 함`;
+    }
     return { state: block ? 'block' : 'ok', short: `국내 시장 필터 ${block ? '신규 매수 멈춤' : '매수 가능'}`,
-             text: where ? `${where} → ${verdict}` : verdict, when };
+             text: (where ? `${where} → ${verdict}` : verdict) + now, when };
   }
-  function krMarketLine(plan) {
-    const mk = krMarket(plan);
+  function krMarketLine(plan, today = null) {
+    const mk = krMarket(plan, today);
     if (!mk) return null;
     return el('div', { class: `mline ${mk.state}` }, el('span', { class: 'dot', 'aria-hidden': 'true' }),
       el('span', {}, el('b', { text: '국내 시장 필터' }), ` · ${mk.text}`, mk.when ? [' · ', el('span', { class: 'muted nowrap', text: mk.when })] : null));
@@ -937,9 +976,17 @@
     const head = el('span', { class: 'tl-head', text: t.date === kstNow().date ? '오늘' : String(t.date).slice(5) });
     const first = [];
     if (showRate) {
-      first.push(seg(t.base === 'stocks' ? '계좌(주식 손익만)' : '계좌', `${fmtPct(t.rate, 2)}${isNum(t.change) ? ` (${fmtWon(t.change)})` : ''}`, cls(t.rate)));
-      if (isNum(t.kospi)) first.push(seg('코스피', fmtPct(t.kospi, 2), cls(t.kospi)));
-      if (isNum(t.gap)) first.push(seg('코스피와 차이 (봇 기준)', gapText(t.gap, ''), cls(t.gap)));
+      // [11-03 웹 고도화 4] 계좌의 대부분은 직접 보유라, 봇(운용자산)과 계좌를 나눠 코스피와 비교합니다.
+      if (isNum(t.bot_rate)) {
+        first.push(seg('봇', `${fmtPct(t.bot_rate, 2)}${isNum(t.bot_change) ? ` (${fmtWon(t.bot_change)})` : ''}`, cls(t.bot_rate)));
+        if (isNum(t.kospi)) first.push(seg('코스피', fmtPct(t.kospi, 2), cls(t.kospi)));
+        if (isNum(t.bot_gap)) first.push(seg('봇 vs 코스피', gapText(t.bot_gap, ''), cls(t.bot_gap)));
+        first.push(seg(t.base === 'stocks' ? '계좌(직접 포함 · 주식 손익만)' : '계좌(직접 포함)', `${fmtPct(t.rate, 2)}${isNum(t.change) ? ` (${fmtWon(t.change)})` : ''}`, cls(t.rate)));
+      } else {
+        first.push(seg(t.base === 'stocks' ? '계좌(주식 손익만)' : '계좌', `${fmtPct(t.rate, 2)}${isNum(t.change) ? ` (${fmtWon(t.change)})` : ''}`, cls(t.rate)));
+        if (isNum(t.kospi)) first.push(seg('코스피', fmtPct(t.kospi, 2), cls(t.kospi)));
+        if (isNum(t.gap)) first.push(seg('코스피와 차이 (계좌 기준)', gapText(t.gap, ''), cls(t.gap)));
+      }
     }
     const second = [];
     if (t.known > 0 && isNum(t.realized)) second.push(seg('실현손익', fmtWon(t.realized), cls(t.realized)));
@@ -1105,6 +1152,14 @@
     };
   }
   const splitWith = (side, ...main) => el('div', { class: 'split' }, el('div', { class: 'main grid' }, main), side ? el('div', { class: 'side' }, side) : null);
+  // [11-03 웹 고도화 10] 넓은 화면 오른쪽 칸(430px)을 비워 두지 않습니다.
+  //   종목을 골랐으면 오른쪽 = 일봉 상세(예전 그대로)이고 idle 카드는 왼쪽 아래로 · 안 골랐으면 idle 카드를 오른쪽에 둡니다.
+  //   좁은 화면(1040px 미만)에서는 상세는 위, idle 카드는 아래(예전 순서와 같음).
+  function layout(side, main, idle = []) {
+    if (side) return [splitWith(side, ...main, ...idle)];
+    if (!idle.length) return [el('div', { class: 'split solo' }, el('div', { class: 'main grid' }, main))];
+    return [el('div', { class: 'split' }, el('div', { class: 'main grid' }, main), el('div', { class: 'side idle grid' }, idle))];
+  }
 
   // [10-20] 신한 계좌 한 줄(조회 전용). 주식 평가금액만(예수금 제외) · 읽은 시각을 함께 적고, 오래되면 노랑.
   function shinhanHealth(sh) {
@@ -1118,13 +1173,15 @@
     if (!sh.summary) return shinhanHealth(sh);
     const s = sh.summary;
     const when = sh.updated_at ? ago(sh.updated_at).text : '읽은 적 없음';
-    const tail = [`${when} 읽음`];
-    if (sh.message) tail.push(sh.message);       // 정해 둔 말만 옴(예: '비밀번호 확인 필요 1개 (그 계좌는 이전 값)')
+    // [11-03 웹 고도화 9] 주의 글(정해 둔 말만 옴)은 한 줄 요약 + 펼치기. 옛 자료(warnings 없음)는 message 한 덩어리.
+    const warns = Array.isArray(sh.warnings) ? sh.warnings.filter(Boolean) : (sh.message ? [sh.message] : []);
     return el('div', { class: 'muted', style: 'margin-top:4px' },
       shinhanHealth(sh),
       `신한 주식 ${fmtWon(s.eval)} · ${s.count}종목${s.overseas ? `(해외 ${s.overseas})` : ''} · 손익 `,
       el('span', { class: cls(s.pl), text: isNum(s.pl) ? `${fmtWon(s.pl)} (${fmtPct(s.pl_rate)})` : NONE }),
-      ' · ', el('span', { class: sh.stale ? 'warn-text' : '', text: tail.join(' · ') }));
+      ` · ${when} 읽음`,
+      warns.length ? el('details', { class: 'note-more' }, el('summary', { class: sh.stale ? 'warn-text' : '', text: `주의 ${warns.length}건` }),
+        el('ul', {}, warns.map((w) => el('li', { text: w })))) : null);
   }
   function renderHome(d) {
     const out = [];
@@ -1137,40 +1194,56 @@
     (d.health || []).filter((h) => !(off && h.key === 'kr_off'))
       .forEach((h) => out.push(alertBox('warn small', null, el('div', { class: 'alert-line', text: `[점검] ${h.message}` }))));
     const today = todayLine(d);
-    const hero = card('총자산', '국내 계좌 · 예수금 포함',
-      el('div', { class: 'hero num', text: sum ? fmtWon(sum.total) : NONE }),
+    // [11-03 웹 고도화 3] 전체 자산 = 토스 국내(예수금 포함) + 토스 미국(평가 + 매수 가능 · 원화 환산) + 신한 주식(예수금 제외)
+    const fx = usdKrw(d);
+    const usTotal = isNum(us.value) ? us.value + (isNum(us.buying_power) ? us.buying_power : 0) : null;
+    const shEval = ((d.shinhan || {}).summary || {}).eval;
+    const parts = [];
+    if (sum) parts.push({ label: '토스 국내', krw: sum.total, text: fmtWon(sum.total) });
+    if (isNum(usTotal)) parts.push({ label: '토스 미국', krw: fx ? usTotal * fx : null, text: `${fmtUsd(usTotal)}${fx ? ` (${fmtCompact(usTotal * fx)}원)` : ''}` });
+    if (isNum(shEval)) parts.push({ label: '신한 주식', krw: shEval, text: fmtWon(shEval) });
+    const grand = parts.length > 1 && parts.every((p) => isNum(p.krw)) ? parts.reduce((a, p) => a + p.krw, 0) : null;
+    const hero = card(isNum(grand) ? '전체 자산' : '총자산', isNum(grand) ? '토스 국내·미국 + 신한 주식(신한 예수금 제외)' : '국내 계좌 · 예수금 포함',
+      el('div', { class: 'hero num', text: isNum(grand) ? fmtWon(grand) : sum ? fmtWon(sum.total) : NONE }),
+      isNum(grand) ? el('div', { class: 'asset-parts' }, parts.map((p) => el('span', { class: 'part' }, el('span', { class: 'k', text: p.label }), ' ', el('b', { class: 'num', text: p.text }),
+        el('span', { class: 'muted', text: ` ${fmtPct((p.krw / grand) * 100, (p.krw / grand) * 100 < 1 ? 1 : 0)}` })))) : null,
       sum ? el('div', { class: 'hero-sub' },
-        el('span', { class: cls(sum.pl), text: `평가손익 ${fmtWon(sum.pl)} (${fmtPct(sum.pl_rate)})` }),
+        el('span', { class: cls(sum.pl), text: `${isNum(grand) ? '토스 국내 ' : ''}평가손익 ${fmtWon(sum.pl)} (${fmtPct(sum.pl_rate)})` }),
         // '오늘' 한 줄이 있으면 오늘 값은 거기에만 둡니다(같은 화면에 서로 다른 '오늘' 이 둘 보이지 않게).
         today ? null : [' · ', el('span', { class: cls(sum.day), text: `오늘 ${fmtWon(sum.day)} (${fmtPct(sum.day_rate)})` })]) : empty('보유 조회 전입니다'),
       today,
-      isNum(us.value) ? el('div', { class: 'muted', style: 'margin-top:6px' }, `미국 ${fmtUsd(us.value)} · 손익 `, el('span', { class: cls(us.pnl), text: fmtUsd(us.pnl) })) : null,
+      isNum(us.value) ? el('div', { class: 'muted', style: 'margin-top:6px' }, `${isNum(grand) ? '토스 미국 평가손익 ' : `미국 ${fmtUsd(us.value)} · 손익 `}`, el('span', { class: cls(us.pnl), text: fmtUsd(us.pnl) })) : null,
       shinhanLine(d.shinhan),
       el('div', { style: 'margin-top:10px' }, statusPills(d)),
-      (d.rules || {}).kr_h1 ? krMarketLine(d.kr_h1) : null,
+      (d.rules || {}).kr_h1 ? krMarketLine(d.kr_h1, (d.rank_now || {}).kr) : null,
       d.status && d.status.us_status ? el('div', { class: 'muted', style: 'font-size:12.5px;margin:4px 0 6px', text: `미국 상태: ${d.status.us_status}` }) : null);
     out.push(hero);
     out.push(mapCard(d));                    // [10-16] 히트맵 시트를 홈으로 합침
     // 히트맵 칸을 누르면 일봉 상세를 옆(넓은 화면)·위(휴대폰)에 엽니다. 다른 탭과 같은 방식.
     const pm = S.pick ? S.pick.split(':')[0] : null;
-    const wrap = () => [splitWith(pm ? pickPanel(d, pm) : null, ...out)];
+    const idle = [];
+    const wrap = () => layout(pm ? pickPanel(d, pm) : null, out, idle);
     const t = d.today;
-    if (!t) { out.push(missing('오늘 할 일')); return wrap(); }
+    if (!t) { idle.push(missing('오늘 할 일')); return wrap(); }
     // 국내 매매 꺼짐은 맨 위 알림에 이미 크게 있으므로 '지금 확인' 목록에서는 뺍니다.
     const urgent = (t.urgent || []).filter((r) => !(off && r.kind === 'info' && r.market === '국내' && /매매가 꺼져/.test(r.title || '')));
     const now = kstNow();
     const sameDay = (d.generated_at || '').slice(0, 10) === now.date;
-    const plan = (t.schedule || []).map((p) => ({ ...p, done: sameDay ? p.time <= now.hm : p.done }));
-    const next = plan.find((p) => !p.done);
-    out.push(el('div', { class: 'grid two' },
+    // [11-03 웹 고도화 16] 미국 줄(end 있음)은 끝 시각까지 '진행 중' · 자정을 넘겨도(시작 23:30 · 끝 05:00) 이어서 봅니다.
+    const within = (p) => (p.time <= p.end ? now.hm >= p.time && now.hm < p.end : now.hm >= p.time || now.hm < p.end);
+    const plan = (t.schedule || []).map((p) => (p.end
+      ? { ...p, running: sameDay ? within(p) : !!p.running, done: false }
+      : { ...p, done: sameDay ? p.time <= now.hm : p.done }));
+    const next = plan.find((p) => !p.done && !p.running);
+    idle.push(el('div', { class: 'grid two' },
       card('지금 확인', `${urgent.length}건`, itemList(urgent, '확인할 것이 없습니다')),
       card('매수 대기', `${(t.waiting || []).length}종목`, itemList(t.waiting, '대기 종목이 없습니다'))));
-    out.push(card('매수 안 한 이유', `${(t.skipped || []).length}종목 · 조건까지 갔는데 막힌 것만`,
+    idle.push(card('매수 안 한 이유', `${(t.skipped || []).length}종목 · 조건까지 갔는데 막힌 것만`,
       itemList(t.skipped, '오늘 막힌 종목이 없습니다', 12)));
     const brief = briefCard(d);
-    if (brief) out.push(brief);
-    out.push(card('오늘 일정', next ? `다음: ${next.time} ${next.title}` : '오늘 일정 끝',
-      el('div', { class: 'timeline' }, plan.map((p) => el('div', { class: p.done ? 'done' : p === next ? 'next' : '' },
+    if (brief) idle.push(brief);
+    idle.push(card('오늘 일정', next ? `다음: ${next.time} ${next.title}` : '오늘 일정 끝',
+      el('div', { class: 'timeline' }, plan.map((p) => el('div', { class: p.running ? 'running' : p.done ? 'done' : p === next ? 'next' : '' },
         el('span', { class: 'num', text: p.time }), el('span', { text: p.title }))))));
     return wrap();
   }
@@ -1215,6 +1288,19 @@
     //   순서: 종목 → 매도선까지 → 수익률 → 평가손익 → 일간 → 현재가 → 평단 → 수량
     //   모든 종목이 같은 경로(예: 전부 모멘텀)면 칩은 정보가 없고 고정 첫 칸만 넓히므로 숨깁니다.
     const mixed = new Set(holds.map((h) => h.source)).size > 1;
+    // [11-03 웹 고도화 12] 보유 종목의 오늘 순위와 주간 점검 매도선(상위 keep_n 위)까지 여유(순위 저장 때 값)
+    const rk = (d.rank_now || {}).kr || {};
+    const heldRank = new Map((rk.held || []).map((r) => [r.symbol, r]));
+    const rankCell = (h) => {
+      if (h.source !== 'core') return el('span', { class: 'muted', text: h.source === 'manual' ? '' : '—' });
+      const r = heldRank.get(h.symbol);
+      if (!r) return NONE;
+      if (!r.ok) return [`${fmtNum(r.rank)}위 `, chip(String(r.why || '자격 없음').replace(/\s*[(（].*$/, ''), 'warn')];
+      if (!isNum(rk.keep_n)) return `${fmtNum(r.rank)}위`;
+      const room = rk.keep_n - r.rank;
+      return el('span', { title: `주간 점검 매도선: 상위 ${fmtNum(rk.keep_n)}위(${String(rk.day || '').slice(5)} 순위)` },
+        `${fmtNum(r.rank)}위 `, room >= 0 ? el('span', { class: 'muted', text: `여유 ${fmtNum(room)}` }) : chip('매도선 밖', 'warn'));
+    };
     out.push(card('보유 종목', `${holds.length}종목${mixed ? '' : holds.length ? ` · 전부 ${KR_LABEL[holds[0].source] || '봇'}` : ''} · 누르면 일봉`,
       holds.length ? dense([
         { label: '종목', lead: true, cell: (h) => [mixed ? chip(KR_LABEL[h.source], h.source === 'watch' ? 'cash' : h.source === 'core' ? 'idx' : '') : null, mixed ? ' ' : null,
@@ -1222,15 +1308,17 @@
         { label: '매도선까지', right: true, cell: (h) => (h.source === 'park' ? el('span', { class: 'muted', text: '파킹' })
           : stopCell(h.source === 'manual' ? null : h.exit, h.source === 'manual')) },
         { label: '수익률', right: true, tone: (h) => cls(h.pl_rate), cell: (h) => fmtPct(h.pl_rate) },
+        heldRank.size ? { label: '순위·매도선', right: true, cell: rankCell } : null,
         { label: '평가손익', right: true, tone: (h) => cls(h.pl), cell: (h) => fmtWon(h.pl) },
         { label: '일간', right: true, tone: (h) => cls(h.day_rate), cell: (h) => fmtPct(h.day_rate, 1) },
         { label: '현재가', right: true, cell: (h) => fmtPrice(h.price) },
         { label: '평단', right: true, cell: (h) => fmtPrice(h.avg) },
         { label: '수량', right: true, cell: (h) => fmtQty(h.qty) },
-      ], holds, { onPick: pick, selected: S.pick, key: (h) => `KR:${h.symbol}` }) : empty('보유 종목이 없습니다')));
+      ].filter(Boolean), holds, { onPick: pick, selected: S.pick, key: (h) => `KR:${h.symbol}` }) : empty('보유 종목이 없습니다')));
     const rules = d.rules || {};
-    if (rules.kr_h1) out.push(h1PlanCard(d.kr_h1, 'KR', pick));
-    if (rules.kr_h1) out.push(rankNowCard((d.rank_now || {}).kr, 'KR', pick));
+    const idle = [];
+    if (rules.kr_h1) idle.push(h1PlanCard(d.kr_h1, 'KR', pick, d));
+    if (rules.kr_h1) idle.push(rankNowCard((d.rank_now || {}).kr, 'KR', pick, (d.kr_h1 || {}).market_block === true));
     const watch = d.watchlist || [];
     if (rules.kr_watch_buy !== false) out.push(card('눌림목 관찰목록', `${watch.length}종목 · 전일 종가 기준`, watch.length ? dense([
       // 지지선이 무엇인지가 핵심입니다. 진입 방식 이름에서 선 이름만 뽑습니다.
@@ -1255,29 +1343,52 @@
         { label: '거래량비', right: true, cell: (r) => fmtNum(r.udv, 2) },
       ], ranks, { onPick: pick, selected: S.pick, key: (r) => `KR:${r.symbol}` }))));
     }
-    return [splitWith(pickPanel(d, 'KR'), ...out)];
+    return layout(pickPanel(d, 'KR'), out, idle);
   }
 
   // [09-28 화면 정리] 혼합1 이번 주 계획. 예전 점수 순위·점수 후보 대신 실제로 사고파는 목록을 보여 줍니다.
   // [10-07] 국내 규칙 문구는 PC 프로그램이 장부에 남긴 실제 규칙(plan.rule)을 씁니다(예전 문구는 '12-1개월' 뿐이었음).
   //   시장 필터 판정과, 그 때문에 사지 않은 종목(plan.buy_blocked)도 함께 보여 줍니다.
   // [10-27] 미국 규칙 B · VIX 계단 설명 한 줄
-  function usLadderText(l) {
+  // [11-03 웹 고도화 13] VIX 가 이 값으로 마감하면 다음 장 주식 비중(us_vix.replay 와 같은 계단 · 18 밑이면 기본으로)
+  function ladderNext(l, vix) {
+    if (!l || !isNum(vix) || !isNum(l.target)) return null;
+    const steps = (l.steps || []).filter((s) => isNum(s[0]) && isNum(s[1])).sort((a, b) => a[0] - b[0]);
+    const level = Math.max(0, ...steps.filter(([v]) => vix >= v).map(([, p]) => p));
+    const target = vix < l.reset ? l.base : Math.max(l.target, level);
+    const up = steps.find(([, p]) => p > target);
+    return { target, up, down: target > l.base ? l.reset : null };
+  }
+  function usLadderText(l, vixNow = null) {
     if (!l) return 'VIX 계단';
     const steps = (l.steps || []).map(([v, p]) => `${fmtNum(v)} 이상 ${fmtPct(p, 0)}`).join(' · ');
     const now = isNum(l.target) ? `지금 주식 ${fmtPct(l.target, 0)} · ${l.park || 'SGOV'} ${fmtPct(100 - l.target, 0)}` : '오늘 비중 아직 없음';
     const vix = isNum(l.vix) ? ` (전날 VIX ${fmtNum(l.vix, 1, 1)}${l.vix_day ? ` · ${String(l.vix_day).slice(5)}` : ''}${l.fresh === false ? ' · 최신 아님' : ''})` : '';
-    return `${now}${vix} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤`;
+    let next = '';
+    const v = vixNow && isNum(vixNow.price) ? vixNow.price : null, n = ladderNext(l, v);
+    if (n) {
+      next = ` · 지금 VIX ${fmtNum(v, 2, 2)}${vixNow.as_of ? `(${String(vixNow.as_of).slice(5, 10)})` : ''}로 마감하면 다음 장 주식 ${fmtPct(n.target, 0)}`;
+      if (n.up) next += ` · ${fmtNum(n.up[0])} 이상이면 ${fmtPct(n.up[1], 0)}(${fmtNum(Math.max(0, n.up[0] - v), 2, 2)} 남음)`;
+      if (n.down !== null) next += ` · ${fmtNum(n.down)} 밑이면 ${fmtPct(l.base, 0)}`;
+    }
+    return `${now}${vix}${next} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤`;
   }
 
   // [10-28] 지금 실계좌 규칙 순위(국내 혼합1 · 미국 6-1개월). PC 프로그램 '국내 순위'·'미국 순위'와 같은 자료.
-  function nowState(r) {
+  // [11-03 웹 고도화 6] 새로 사지 않는 이유를 나눠 적습니다(예전엔 buyable=false 면 모두 '신고가 아님').
+  //   block = 이번 주 국내 시장 필터로 신규 매수를 멈춘 주(주간 점검 장부) · floor = 새로 살 때 12-1 하한(%)
+  function nowState(r, block = false, floor = null) {
     if (r.held) return ['보유', 'core'];
     if (!r.ok) return [String(r.why || '자격 없음').replace(/\s*[(（].*$/, ''), ''];      // 괄호 속 가격은 빼고 짧게
-    if (r.buyable === false) return ['신고가 아님', 'warn'];
+    if (r.buyable === false) {
+      if (r.new_high === false) return ['신고가 아님', 'warn'];
+      if (r.mom_low === true || (isNum(floor) && isNum(r.mom) && r.mom < floor)) return [`12-1 ${fmtPct(isNum(floor) ? floor : 0, 0)} 미만`, 'warn'];
+      return ['새로 안 삼', 'warn'];
+    }
+    if (block) return ['이번 주 시장 필터로 안 삼', 'warn'];
     return ['살 수 있음', 'idx'];
   }
-  function rankNowCard(v, market, pick) {
+  function rankNowCard(v, market, pick, block = false) {
     const rows = (v && v.rows) || [];
     const title = market === 'US' ? '미국 순위 · 지금 규칙(6-1개월)' : '국내 순위 · 지금 규칙(혼합1)';
     if (!rows.length) return card(title, market === 'US' ? '채점 뒤 보입니다' : '거래일 15:35 뒤 하루 한 번 계산', empty('아직 순위가 없습니다'));
@@ -1286,7 +1397,7 @@
     const cols = [
       { label: '#', right: true, cell: (r) => r.rank },
       { label: '종목', lead: true, cell: (r) => el('span', { class: 'sym', text: market === 'US' ? r.symbol : (r.name || r.symbol) }) },
-      { label: '상태', cell: (r) => { const [t, k] = nowState(r); return chip(t, k); } },
+      { label: '상태', cell: (r) => { const [t, k] = nowState(r, block, v.min_mom); return chip(t, k); } },
       { label: market === 'US' ? '6-1' : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) },
       market === 'KR' ? { label: '순위점수', right: true, cell: (r) => fmtNum(r.rank_pct, 1, 1) } : null,
       market === 'KR' ? { label: '17점', right: true, cell: (r) => (isNum(r.score17) ? r.score17 : NONE) } : null,
@@ -1296,27 +1407,35 @@
         dense(cols, rows, { onPick: pick, selected: S.pick, key: (r) => `${market}:${r.symbol}` })));
   }
 
-  function h1PlanCard(plan, market, pick) {
+  function h1PlanCard(plan, market, pick, d = {}) {
     const cur = market === 'US' ? 'USD' : 'KRW';
     const isB = market === 'US' && !!plan && plan.rule === 'B';
     const title = market === 'US' ? `미국 혼합1 이번 ${isB ? '달' : '주'} 계획` : '국내 혼합1 이번 주 계획';
     if (!plan || !plan.week) return card(title, '아직 점검 전', empty('그 주 첫 거래일 종가 매매(국내 15:18 · 미국 첫 장) 때 계획을 세웁니다'));
-    const name = (r) => [el('span', { class: 'sym', text: r.name || r.symbol }), r.held ? chip('보유', 'core') : null];
+    // [11-03 웹 고도화 8] 미국은 티커로(보유 표·순위 표와 같은 이름) · 회사 이름은 넓은 화면에서만
+    const name = (r) => (market === 'US'
+      ? [el('span', { class: 'sym', text: r.symbol }), r.held ? chip('보유', 'core') : null, r.name && r.name !== r.symbol ? el('span', { class: 'muted wide-only', text: ` ${r.name}` }) : null]
+      : [el('span', { class: 'sym', text: r.name || r.symbol }), r.held ? chip('보유', 'core') : null]);
     const sub = `${plan.day ? String(plan.day).slice(5) : plan.week} ${isB ? '월 점검 · 규칙 B' : (plan.monthly ? '월 교체' : '주간 점검')} · 종목당 ${fmtMoney(plan.slot, cur)}`
       + (isNum(plan.ranked) ? ` · 순위 ${fmtNum(plan.ranked)}종목` : '');
     const list = (rows, extra) => dense([
       { label: '종목', lead: true, cell: (r) => name(r) },
-      rows.some((r) => isNum(r.mom)) ? { label: '수익률(순위 기준)', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) } : null,
+      rows.some((r) => isNum(r.mom)) ? { label: market === 'US' ? '6-1' : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) } : null,
       ...(extra || []),
     ].filter(Boolean), rows, { onPick: pick, selected: S.pick, key: (r) => `${market}:${r.symbol}` });
     const sell = plan.sell || [], buy = plan.buy || [], left = plan.left || [], blocked = plan.buy_blocked || [];
+    const lowMom = plan.low_mom || [], notHigh = plan.not_high || [];
+    // [11-03 웹 고도화 7] 미국 계획 옆 실제 체결(계획한 날부터 봇 체결 합)
+    const results = plan.results || null;
+    const filled = (r, side) => { const x = results && results[r.symbol]; return x && x[side] > 0 ? fmtUsd(x[side]) : null; };
+    const unbought = results ? buy.filter((r) => !filled(r, 'buy')) : [];
     // 손절은 늘 '고점 대비 하락' 이라 설정 부호(−20 / 20)와 관계없이 −로 씁니다.
     const stop = isNum(plan.stop) && plan.stop !== 0 ? `고점 대비 ${fmtPct(-Math.abs(plan.stop), 0)} 손절` : '고점 대비 손절 끔';
     const keep = isNum(plan.keep) ? fmtPct(plan.keep, 0) : NONE;
     const rules = isB
       ? [['순위', '6-1개월 수익률'],
          ['매달 첫 장', `순위 상위 ${keep} 밖·자격 상위 10 밖이면 교체 · 보유 종목은 100일선 아래여도 유지(새로 살 때만 100일선 위) · ${stop}`],
-         ['주식 비중', usLadderText(plan.ladder)]]
+         ['주식 비중', usLadderText(plan.ladder, (((d.brief || {}).items) || []).find((r) => r.label === 'VIX') || null)]]
       : market === 'US'
       ? [['순위', '6-1개월 수익률'],
          ['매주 첫 장', `자격 잃음·순위 상위 ${keep} 밖이면 매도 · 월 첫 점검은 상위 10 밖 교체 · ${stop}(장중)`
@@ -1326,17 +1445,31 @@
            + (plan.score_drop ? ` · 모멘텀약화(산 날보다 ${fmtNum(plan.score_drop)}점 이상 하락${plan.score_floor ? `·${fmtNum(plan.score_floor)}점 이하` : ''}) 매도` : '')],
          ['매주 첫 거래일', `자격 잃음·순위 상위 ${keep} 밖이면 매도 · 월 첫 점검은 상위 ${fmtNum(plan.monthly_keep || plan.slots || 10)} 밖 교체`
            + (isNum(plan.share_limit) ? ` · 1주가 종목당의 ${fmtNum(plan.share_limit, 1, 0)}배 이하면 1주 매수` : '')]];
+    let unboughtNote = null;
+    if (unbought.length) {
+      const l = plan.ladder || {};
+      const full = isB && isNum(l.share) && isNum(l.target) && l.share >= l.target - 1;
+      unboughtNote = el('div', { class: 'chart-note', text: `안 삼 ${unbought.map((r) => r.symbol).join(', ')}`
+        + (isB ? ' · 규칙 B 는 계획 매수를 월 점검 날 한 번만 함(빈자리는 다음 날부터 그날 순위로 채움)' : '')
+        + (full ? ` · 그날 주식 비중 ${fmtPct(l.share, 1)}로 한도(${fmtPct(l.target, 0)})에 닿아 살 돈이 남지 않음` : '') });
+    }
     return card(title, sub,
       el('dl', { class: 'rulebox' }, rules.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })])),
-      market === 'KR' ? krMarketLine(plan) : null,
+      market === 'KR' ? krMarketLine(plan, (d.rank_now || {}).kr) : null,
       el('h3', { class: 'minor', text: `자격 상위 ${(plan.top || []).length}` }),
       (plan.top || []).length ? list(plan.top) : empty('자격 있는 종목이 없습니다'),
       el('h3', { class: 'minor', text: `매도 ${sell.length} · 매수 ${buy.length}${left.length ? ` · 재시도 ${left.length}` : ''}${blocked.length ? ` · 시장 필터로 보류 ${blocked.length}` : ''}` }),
-      sell.length ? list(sell, [{ label: '사유', cell: (r) => r.why || '' }]) : null,
-      buy.length ? list(buy, [{ label: '구분', cell: () => '매수' }]) : null,
+      sell.length ? list(sell, [{ label: '사유', cell: (r) => r.why || '' },
+        results ? { label: '체결', right: true, cell: (r) => filled(r, 'sell') || '안 팜' } : null].filter(Boolean)) : null,
+      buy.length ? list(buy, [results ? { label: '체결', right: true, cell: (r) => filled(r, 'buy') || '안 삼' } : { label: '구분', cell: () => '매수' }]) : null,
+      unboughtNote,
       left.length ? list(left, [{ label: '구분', cell: () => '다음 종가에 재시도' }]) : null,
       blocked.length ? list(blocked, [{ label: '구분', cell: () => '시장 필터로 이번 주 안 삼' }]) : null,
-      !sell.length && !buy.length && !left.length && !blocked.length ? empty(isB ? '이번 달 매도·매수 없음' : '이번 주 매도·매수 없음') : null);
+      !sell.length && !buy.length && !left.length && !blocked.length ? empty(isB ? '이번 달 매도·매수 없음' : '이번 주 매도·매수 없음') : null,
+      // [11-03 웹 고도화 6] 순위·자격은 됐지만 새로 사지 않은 종목(보유 종목은 그대로 둠)
+      lowMom.length || notHigh.length ? el('h3', { class: 'minor', text: `새로 사지 않음 ${lowMom.length + notHigh.length}` }) : null,
+      lowMom.length ? list(lowMom, [{ label: '이유', cell: () => `12-1 ${fmtPct(isNum(plan.min_mom) ? plan.min_mom : 0, 0)} 미만` }]) : null,
+      notHigh.length ? list(notHigh, [{ label: '이유', cell: () => '60일 신고가 아님' }]) : null);
   }
 
   // ------------------------------------------------------------------ 화면: 미국
@@ -1350,27 +1483,35 @@
       tile('오늘 손익', fmtUsd(us.day_pnl), '', cls(us.day_pnl)),
       tile('매수 가능', fmtUsd(us.buying_power), `${(d.rules || {}).us_h1 ? usMarketPill(us).textContent.replace('미국 ', '') : `국면 ${isNum(us.regime) ? us.regime : '?'}/2`} · 채점 ${(us.scan_date || '—').slice(5)}`)));
     if (us.status) out.push(el('div', { class: 'card muted', style: 'font-size:14px', text: `미국 자동매매 상태: ${us.status}` }));
-    const chartHost = el('div', { class: 'chart' });
-    out.push(card('미국 계좌 추이', 'USD · 뉴욕 날짜 기준', chartHost));
-    queueMicrotask(() => lineChart(chartHost, (us.history || []).map((p) => ({ x: p.date, y: p.value })), { currency: 'USD', label: '미국 평가금액' }));
+    const valuePoints = (us.history || []).map((p) => ({ x: p.date, y: p.value }));
+    if (comparePoints((us.vs_index || []).map((p) => ({ ...p, kospi: p.index }))).length >= 2) {
+      // [11-03 웹 고도화 14] 봇 체결만으로 계산한 수익률 vs S&P500(입금·직접 매매가 섞이지 않음) · 평가금액 추이는 두 번째 단추
+      out.push(compareCard({ title: '봇 vs S&P500', points: us.vs_index.map((p) => ({ ...p, kospi: p.index })), idx: 'S&P500', mode: 'usAssetMode',
+        sub: '뉴욕 날짜 · 입금 영향 없음',
+        note: '봇 = 봇이 산 종목(SGOV 포함)의 시간가중 수익률 · 현금·입금·직접 매매는 넣지 않음',
+        other: { label: '평가금액', note: '보유 평가금액(현금 제외) · 입금·매수로도 늘어남 · 봇 성과 아님', currency: 'USD', label2: '미국 평가금액', points: valuePoints } }));
+    } else {
+      const chartHost = el('div', { class: 'chart' });
+      out.push(card('미국 계좌 추이', 'USD · 뉴욕 날짜 기준', chartHost));
+      queueMicrotask(() => lineChart(chartHost, valuePoints, { currency: 'USD', label: '미국 평가금액' }));
+    }
     const pick = pickRow('US');
     const holds = us.holdings || [];
+    // [11-03 웹 고도화 8] 휴대폰에서 손익·수익률이 화면 밖이던 것: 티커 → 수익률 → 손익 순, 회사 이름은 넓은 화면에서만.
     out.push(card('보유 종목', `${holds.length}종목 · 종목을 누르면 일봉이 열립니다`, holds.length ? dense([
       { label: '티커', lead: true, cell: (h) => [chip(h.bot ? (h.kind || '모멘텀') : '수동', h.bot ? 'idx' : ''), ' ', el('span', { class: 'sym', text: h.symbol })] },
-      { label: '종목', cell: (h) => h.name || '' },
+      { label: '수익률', right: true, tone: (h) => cls(h.rate), cell: (h) => fmtPct(isNum(h.rate) ? h.rate * 100 : null) },
+      { label: '손익', right: true, tone: (h) => cls(h.pnl), cell: (h) => fmtUsd(h.pnl) },
+      { label: '종목', wide: true, cell: (h) => h.name || '' },
       { label: '현재가', right: true, cell: (h) => fmtUsd(h.price) },
       { label: '평단', right: true, cell: (h) => fmtUsd(h.avg) },
       { label: '수량', right: true, cell: (h) => fmtQty(h.qty) },
-      { label: '손익', right: true, tone: (h) => cls(h.pnl), cell: (h) => fmtUsd(h.pnl) },
-      { label: '수익률', right: true, tone: (h) => cls(h.rate), cell: (h) => fmtPct(isNum(h.rate) ? h.rate * 100 : null) },
       (d.rules || {}).us_h1 && !holds.some((h) => isNum(h.score)) ? null
         : { label: '점수', right: true, cell: (h) => (isNum(h.score) ? `${isNum(h.entry) ? h.entry + '→' : ''}${h.score}` : '—') },
       { label: '손절까지', right: true, cell: (h) => (h.bot ? (isNum(h.stop_gap) ? fmtPct(h.stop_gap, 1) : '손절 없음') : '봇 미관리') },
     ].filter(Boolean), holds, { onPick: pick, selected: S.pick, key: (h) => `US:${h.symbol}` }) : empty('보유 종목이 없습니다')));
     if ((d.rules || {}).us_h1) {
-      out.push(h1PlanCard(us.h1, 'US', pick));
-      out.push(rankNowCard((d.rank_now || {}).us, 'US', pick));
-      return [splitWith(pickPanel(d, 'US'), ...out)];
+      return layout(pickPanel(d, 'US'), out, [h1PlanCard(us.h1, 'US', pick, d), rankNowCard((d.rank_now || {}).us, 'US', pick)]);
     }
     const cand = us.candidates || [];
     out.push(card('모멘텀 매수 후보', `15점 이상 · RSI·roc_skip·거래량 조건 통과 ${cand.length}종목`, cand.length ? dense([
@@ -1382,7 +1523,7 @@
       { label: 'roc_skip', right: true, tone: (c) => cls(c.roc_skip), cell: (c) => fmtPct(c.roc_skip, 1) },
       { label: '거래량', right: true, cell: (c) => fmtTimes(c.vol) },
     ], cand, { onPick: pick, selected: S.pick, key: (c) => `US:${c.symbol}` }) : empty('조건을 통과한 후보가 없습니다')));
-    return [splitWith(pickPanel(d, 'US'), ...out)];
+    return layout(pickPanel(d, 'US'), out);
   }
 
   // ------------------------------------------------------------------ 홈: 보유 종목 히트맵
@@ -1534,10 +1675,28 @@
       seg('범위', 'mapScope', [['all', '전체'], ['KR', '국내'], ['US', '미국']]),
       seg('색', 'mapColor', [['day', '오늘'], ['pl', '수익률']]),
       seg('묶음', 'mapGroup', [['sector', '업종'], ['account', '계좌']]));
-    const items = all.filter((it) => (scope === 'all' ? isNum(it.krw) : it.market === scope))
+    let items = all.filter((it) => (scope === 'all' ? isNum(it.krw) : it.market === scope))
       .map((it) => ({ ...it, size: scope === 'US' ? it.money : it.krw }))
       .filter((it) => isNum(it.size) && it.size > 0)
       .sort((a, b) => b.size - a.size);
+    // [11-03 웹 고도화 9] 업종으로 볼 때는 같은 종목(예: 신한·토스 둘 다 가진 삼성전자)을 한 칸으로 합칩니다.
+    //   오늘·수익률은 금액 비중으로 가중 평균 · 칸을 누르면 큰 쪽 계좌의 상세 · 계좌로 볼 때는 따로.
+    if (by === 'sector') {
+      const merged = new Map();
+      const wavg = (a, wa, b, wb) => (isNum(a) && isNum(b) ? (a * wa + b * wb) / (wa + wb) : isNum(a) ? a : b);
+      for (const it of items) {
+        const k = `${it.market}:${it.symbol}`, m = merged.get(k);
+        if (!m) { merged.set(k, { ...it, accounts: [it.account] }); continue; }
+        m.day = wavg(m.day, m.size, it.day, it.size);
+        m.pl = wavg(m.pl, m.size, it.pl, it.size);
+        if (isNum(m.money) && isNum(it.money) && m.currency === it.currency) m.money += it.money;
+        if (isNum(m.krw) && isNum(it.krw)) m.krw += it.krw;
+        m.size += it.size;
+        if (!m.accounts.includes(it.account)) m.accounts.push(it.account);
+        m.account = m.accounts.join('+');
+      }
+      items = [...merged.values()].sort((a, b) => b.size - a.size);
+    }
     const currency = scope === 'US' ? 'USD' : 'KRW';
     if (!items.length) {
       return card('보유 종목 히트맵', null, controls, shinhanHealth(d.shinhan),
@@ -1568,7 +1727,7 @@
         el('span', { class: 'muted', text: ` · 상위 3 ${fmtPct((top3 / total) * 100, 1)}` })),
       el('span', {}, `가장 큰 ${by === 'sector' ? '업종' : '계좌'} ${groups[0].name} `, el('b', { class: 'num', text: fmtPct((groups[0].size / total) * 100, 1) })));
     const host = el('div', { class: 'chart tm-host' });
-    const pick = (it) => pickRow(it.market, it.account === '신한' ? 'SH' : null)(it);
+    const pick = (it) => pickRow(it.market, String(it.id).startsWith('SH:') ? 'SH' : null)(it);
     const selId = S.pick ? (S.pickSrc === 'SH' ? S.pick.replace(/^(KR|US):/, 'SH:') : S.pick) : null;
     const notes = [];
     if (scope !== 'KR' && all.some((it) => it.market === 'US')) {
@@ -1598,23 +1757,34 @@
     const lost = noPrice.concat((shs.unpriced || []).filter((n) => !noPrice.includes(n)));
     if (lost.length) notes.push(`시세 없음(지도에서 뺌): ${lost.join(', ')}`);
     queueMicrotask(() => treemap(host, groups, total, { colorKey, selected: selId, onPick: pick }));
+    // [11-03 웹 고도화 9] 안내가 폰에서 10줄 넘던 것: 첫 줄만 보이고 나머지는 펼치기
     return card('보유 종목 히트맵', `${by === 'sector' ? '업종별' : '계좌별'} · 칸을 누르면 일봉`, controls, shinhanHealth(d.shinhan), summary, host, mapLegend(colorKey),
-      notes.length ? el('div', { class: 'chart-note', text: notes.join(' · ') }) : null,
+      notes.length ? el('div', { class: 'chart-note', text: notes[0] }) : null,
+      notes.length > 1 ? el('details', { class: 'note-more' }, el('summary', { text: `안내 ${notes.length - 1}개 더` }),
+        el('ul', {}, notes.slice(1).map((n) => el('li', { text: n })))) : null,
       el('details', { class: 'tm-table' }, el('summary', { text: `비중 순 표 (${items.length}종목)` }), dense([
         { label: '종목', lead: true, cell: (it) => [chip(it.market, it.market === 'US' ? '' : 'idx'), ' ', el('span', { class: 'sym', text: it.market === 'US' ? it.symbol : it.name })] },
         { label: '비중', right: true, cell: (it) => fmtPct((it.size / total) * 100, 1) },
         { label: '오늘', right: true, tone: (it) => cls(it.day), cell: (it) => fmtPct(it.day, 2) },
         { label: '수익률', right: true, tone: (it) => cls(it.pl), cell: (it) => fmtPct(it.pl, 1) },
         { label: '평가금액', right: true, cell: (it) => fmtMoney(it.money, it.currency) },
-        { label: by === 'sector' ? '업종' : '계좌', cell: (it) => (by === 'sector' ? it.sector : it.account) },
+        { label: '업종', cell: (it) => it.sector },
+        { label: '계좌', cell: (it) => it.account },
       ], items, { onPick: pick, selected: selId, key: (it) => it.id })));
   }
 
   // ------------------------------------------------------------------ 화면: 성과
   function renderPerf(d) {
-    const perf = d.performance && d.performance[S.perfMarket];
+    // [11-03 웹 고도화 11] '지금 규칙만'(혼합1·규칙 B·파킹 체결) / '전체'(예전 규칙 포함). 옛 자료는 전체만.
+    const all = d.performance || {};
+    const hasNow = !!all[`${S.perfMarket}_now`];
+    const nowOnly = hasNow && S.perfScope === 'now';
+    const perf = all[nowOnly ? `${S.perfMarket}_now` : S.perfMarket];
+    const nowTags = (all.now_tags || []).map(String);
     const seg = el('div', { class: 'controls' }, el('div', { class: 'seg', role: 'group', 'aria-label': '시장' },
-      [['KR', '국내 KRW'], ['US', '미국 USD']].map(([k, label]) => el('button', { type: 'button', 'aria-pressed': String(S.perfMarket === k), text: label, onClick: () => { S.perfMarket = k; S.tradeLimit = 60; render(); } }))));
+      [['KR', '국내 KRW'], ['US', '미국 USD']].map(([k, label]) => el('button', { type: 'button', 'aria-pressed': String(S.perfMarket === k), text: label, onClick: () => { S.perfMarket = k; S.tradeLimit = 60; render(); } }))),
+      hasNow ? el('div', { class: 'seg', role: 'group', 'aria-label': '규칙' },
+        [['now', '지금 규칙만'], ['all', '전체(예전 규칙 포함)']].map(([k, label]) => el('button', { type: 'button', 'aria-pressed': String(S.perfScope === k), text: label, onClick: () => { S.perfScope = k; S.tradeLimit = 60; render(); } }))) : null);
     if (!perf) return [seg, missing('성과')];
     const cur = perf.currency;
     const total = perf.total || {};
@@ -1640,12 +1810,19 @@
     const entrySub = (g) => `${g.count}건 · 승률 ${fmtPct(g.win_rate, 0)}`
       + (isNum(g.avg_pct) ? ` · 수익률 ${fmtPct(g.avg_pct, 1)}` : '')
       + (isNum(g.hold) ? ` · ${fmtNum(g.hold, 0)}일 보유` : '');
-    [['by_rule', '매수 규칙별 손익', '어떤 매수가 돈을 벌었는지'],
-     ['by_volume', '매수일 거래량별 손익', '하루 전체 거래량 / 20일 평균']].forEach(([key, title, note]) => {
+    [['by_rule', '매수 규칙별 손익', '어떤 매수가 돈을 벌었는지', false],
+     ['by_volume', '매수일 거래량별 손익', '하루 전체 거래량 / 20일 평균 · 예전 눌림목 분석용', true]].forEach(([key, title, note, folded]) => {
       const rows = (perf[key] || []).slice().sort((a, b) => (b.total || 0) - (a.total || 0));
       if (!rows.length) return;
       const skipped = rows.reduce((n, g) => n + (g.known ? 0 : g.count || 0), 0);
       const host = el('div', { class: 'chart' });
+      // [11-03 웹 고도화 11] 거래량별은 지금 규칙에 쓰지 않아 접어 둡니다(펼치면 그림).
+      if (folded) {
+        const box = el('details', {}, el('summary', { text: '펼치기' }), host);
+        box.addEventListener('toggle', () => { if (box.open && !host.childNodes.length) hBars(host, rows.map((g) => ({ name: g.name, value: g.known ? g.total : null, sub: entrySub(g) })), cur); });
+        out.push(card(title, skipped ? `${note} · 원가 미확인 ${skipped}건 제외` : note, box));
+        return;
+      }
       out.push(card(title, skipped ? `${note} · 원가 미확인 ${skipped}건 제외` : note, host));
       queueMicrotask(() => hBars(host, rows.map((g) => ({ name: g.name, value: g.known ? g.total : null, sub: entrySub(g) })), cur));
     });
@@ -1693,7 +1870,9 @@
       lineChart(ddHost, (curve.underwater || []).map(([x, y]) => ({ x, y })), { currency: cur, zero: true, kind: 'dd', label: '고점 대비' });
     });
 
-    const trades = perf.trades || [];
+    // 지금 규칙만 볼 때 체결 목록은 전체 목록에서 같은 기준(사유 앞글자)으로 거릅니다(자료 크기 때문에 따로 안 보냄).
+    const trades = nowOnly ? ((all[S.perfMarket] || {}).trades || []).filter((t) => nowTags.some((p) => String(t.tag || '').startsWith(p)))
+      : (perf.trades || []);
     const search = el('input', { class: 'search', type: 'search', placeholder: '종목·사유 검색', value: S.tradeQuery, 'aria-label': '체결 검색' });
     const body = el('tbody');
     const more = el('button', { type: 'button', class: 'small-button', text: '더 보기' });
