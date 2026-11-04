@@ -918,17 +918,30 @@
       where = `코스피 ${fmtNum(plan.market_index, 0)} · ${plan.market_ma_days}일선 ${fmtNum(plan.market_ma, 0)}보다 `
         + `${fmtPct(Math.abs(plan.market_gap), 1)} ${plan.market_gap >= 0 ? '위' : '아래'}`;
     }
-    const verdict = block ? '이번 주 새로 사지 않음 (매도·손절은 그대로)' : '이번 주 새로 삼';
+    // [11-04] VKOSPI 공포 구간이면 코스피가 일선 아래여도 새로 삼(필터 해제). vk = 지금 상태(다음 종가 매매 기준)
+    const vk = plan.vkospi && typeof plan.vkospi === 'object' ? plan.vkospi : null;
+    const released = !block && plan.market_release === true;
+    const verdict = block ? (vk && vk.on === true ? '점검 때는 새로 사지 않음' : '이번 주 새로 사지 않음 (매도·손절은 그대로)')
+      : released ? '60일선 아래지만 VKOSPI 공포 구간이라 필터 해제 · 이번 주 새로 삼' : '이번 주 새로 삼';
     // [11-03 웹 고도화 5] 점검 날 값과 함께 오늘(순위 저장 때) 값 · 막힌 주면 주중 회복 매수까지 남은 폭
     let now = '';
     const t = today || {};
     if (t.day && plan.day && t.day > plan.day && isNum(t.market_index) && isNum(t.market_ma) && isNum(t.market_gap)) {
       now = ` · 오늘(${String(t.day).slice(5)}) 코스피 ${fmtNum(t.market_index, 0)} · ${t.market_ma_days || plan.market_ma_days}일선 ${fmtNum(t.market_ma, 0)}보다 `
         + `${fmtPct(Math.abs(t.market_gap), 1)} ${t.market_gap >= 0 ? '위' : '아래'}`;
-      if (block) now += t.market_gap >= 0 ? ' → 주중 회복 매수 대상(다음 종가 매매)'
+      if (block && !(vk && vk.on)) now += t.market_gap >= 0 ? ' → 주중 회복 매수 대상(다음 종가 매매)'
         : ` → 주중 회복 매수까지 ${fmtPct((t.market_ma / t.market_index - 1) * 100, 1)} 더 올라야 함`;
     }
-    return { state: block ? 'block' : 'ok', short: `국내 시장 필터 ${block ? '신규 매수 멈춤' : '매수 가능'}`,
+    if (vk && isNum(vk.value)) {
+      const vd = vk.date ? `(${String(vk.date).slice(5)})` : '';
+      now += vk.on
+        ? ` · 지금 VKOSPI ${fmtNum(vk.value, 1)}${vd} 공포 구간 → 필터 해제${block ? ' · 다음 종가 매매에 주중 회복 매수 대상' : ''}`
+          + (isNum(vk.lo) ? ` (${fmtNum(vk.lo, 0)} 밑이면 다시 켬)` : '')
+        : ` · VKOSPI ${fmtNum(vk.value, 1)}${vd}` + (isNum(vk.hi) ? ` (${fmtNum(vk.hi, 0)} 넘으면 필터 해제)` : '');
+    }
+    const open = !block || (vk && vk.on === true);
+    return { state: block && !open ? 'block' : 'ok',
+             short: `국내 시장 필터 ${released || (block && open) ? '해제(VKOSPI)' : block ? '신규 매수 멈춤' : '매수 가능'}`,
              text: (where ? `${where} → ${verdict}` : verdict) + now, when };
   }
   function krMarketLine(plan, today = null) {
@@ -1318,7 +1331,8 @@
     const rules = d.rules || {};
     const idle = [];
     if (rules.kr_h1) idle.push(h1PlanCard(d.kr_h1, 'KR', pick, d));
-    if (rules.kr_h1) idle.push(rankNowCard((d.rank_now || {}).kr, 'KR', pick, (d.kr_h1 || {}).market_block === true));
+    if (rules.kr_h1) idle.push(rankNowCard((d.rank_now || {}).kr, 'KR', pick,
+      (d.kr_h1 || {}).market_block === true && !(((d.kr_h1 || {}).vkospi || {}).on === true)));   // [11-04] VKOSPI 해제면 막지 않음
     const watch = d.watchlist || [];
     if (rules.kr_watch_buy !== false) out.push(card('눌림목 관찰목록', `${watch.length}종목 · 전일 종가 기준`, watch.length ? dense([
       // 지지선이 무엇인지가 핵심입니다. 진입 방식 이름에서 선 이름만 뽑습니다.
