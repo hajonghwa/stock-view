@@ -1385,7 +1385,7 @@
       if (n.up) next += ` · ${fmtNum(n.up[0])} 이상이면 ${fmtPct(n.up[1], 0)}(${fmtNum(Math.max(0, n.up[0] - v), 2, 2)} 남음)`;
       if (n.down !== null) next += ` · ${fmtNum(n.down)} 밑이면 ${fmtPct(l.base, 0)}`;
     }
-    return `${now}${vix}${next} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤`;
+    return `${now}${vix}${next} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤${l.cut === 'lowmom' ? ' (되돌릴 때는 6-1 모멘텀 낮은 종목부터 통째로 팖)' : ''}`;
   }
 
   // [10-28] 지금 실계좌 규칙 순위(국내 혼합1 · 미국 6-1개월). PC 프로그램 '국내 순위'·'미국 순위'와 같은 자료.
