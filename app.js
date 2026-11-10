@@ -1058,6 +1058,82 @@
       ], rows));
   }
 
+  // ------------------------------------------------------------------ [11-10] 시장 요약 · 주도주 후보
+  // PC 프로그램이 밤 자료(KRX 일봉 표 · 투자자별 순매수 · 외국인 보유량 등)로 계산한 것을 보여 주기만 합니다. 봇 매매와 무관.
+  // 금액은 억원 단위로 옵니다. 1조 이상이면 조로 줄입니다.
+  const fmtEok = (v) => (!isNum(v) ? NONE : Math.abs(v) >= 10000 ? `${fmtNum(v / 10000, 2)}조` : `${fmtNum(v, 0)}억`);
+  const mmdd = (day) => (day ? String(day).slice(5, 10) : NONE);
+  const pctCol = (label, key, wide = false, digits = 1) => ({ label, right: true, wide, tone: (r) => cls(r[key]), cell: (r) => fmtPct(r[key], digits) });
+  const eokCol = (label, key, wide = false) => ({ label, right: true, wide, tone: (r) => cls(r[key]), cell: (r) => fmtEok(r[key]) });
+  function marketCard(d) {
+    const m = d.market || null;
+    const s = m && m.summary;
+    if (!s) return null;
+    const ks = (s.index || []).find((r) => r.name === '코스피') || null;
+    const vk = s.vkospi || null, br = s.breadth || null, fl = s.flow || null, fo = s.foreign || null;
+    const f5 = fl ? (fl.rows || []).find((r) => r.market === '코스피' && r.who === '외국인') || null : null;
+    const streak = fl && fl.streak && fl.streak.days >= 2 ? `${fmtNum(fl.streak.days)}일 연속 ${fl.streak.side}` : null;
+    const body = [el('div', { class: 'tiles two' },
+      tile('코스피 1년 고점 대비', ks ? fmtPct(ks.dd, 1) : NONE, ks ? `고점 ${mmdd(ks.peak_day)} · ${fmtNum(ks.peak, 2)}` : null, ks ? cls(ks.dd) : ''),
+      tile('VKOSPI', vk ? fmtNum(vk.value, 2) : NONE, vk ? `전날 ${fmtNum(vk.prev, 2)}${vk.release ? ' · 시장 필터 해제 중' : ''}` : null),
+      tile('코스피 외국인 5일', f5 ? fmtEok(f5.d5) : NONE, streak || (fl ? `${mmdd(fl.day)}까지` : null), f5 ? cls(f5.d5) : ''),
+      tile('20일선 위 종목', br ? fmtPct(br.above20, 0) : NONE, br ? `60일 신고가 ${fmtNum(br.hi60)} · 신저가 ${fmtNum(br.lo60)}` : null))];
+    if ((s.index || []).length) {
+      body.push(el('h3', { class: 'minor', text: '지수' }), dense([
+        { label: '지수', lead: true, cell: (r) => r.name },
+        { label: '종가', right: true, cell: (r) => fmtNum(r.close, 2) },
+        pctCol('하루', 'd1'), pctCol('5일', 'd5', true), pctCol('20일', 'd20'), pctCol('고점 대비', 'dd'),
+      ], s.index));
+      // 이동평균선 대비 위치·올해 수익률은 칸이 좁아 글로 적습니다(홈 옆 칸 폭 430px · 휴대폰).
+      s.index.forEach((r) => body.push(el('p', { class: 'muted', text: `${r.name}: 올해 ${fmtPct(r.ytd, 1)} · 20일선 대비 ${fmtPct(r.ma20, 1)} · 60일선 대비 ${fmtPct(r.ma60, 1)} · 200일선 대비 ${fmtPct(r.ma200, 1)}` })));
+    }
+    if (fl && (fl.rows || []).length) {
+      body.push(el('h3', { class: 'minor', text: `투자자별 순매수 · ${mmdd(fl.day)}까지` }), dense([
+        { label: '시장 · 주체', lead: true, cell: (r) => `${r.market} ${r.who}` },
+        eokCol('하루', 'd1'), eokCol('5일', 'd5'), eokCol('20일', 'd20'),
+      ], fl.rows));
+    }
+    if ((s.sectors || []).length) {
+      body.push(el('h3', { class: 'minor', text: '업종 · 시가총액 상위 종목의 중간값 · 20일 수익률 순' }), dense([
+        { label: '업종', lead: true, cell: (r) => r.name },
+        { label: '종목 수', right: true, wide: true, cell: (r) => fmtNum(r.n) },
+        pctCol('5일', 'd5'), pctCol('20일', 'd20'),
+        { label: '60일선 위', right: true, cell: (r) => fmtPct(r.above60, 0) },
+      ], s.sectors));
+    }
+    const lines = [];
+    if (br) lines.push(`시장 폭 (시가총액 상위 ${fmtNum(br.n)}종목): 20일선 위 ${fmtPct(br.above20, 0)} · 60일선 위 ${fmtPct(br.above60, 0)} · 200일선 위 ${fmtPct(br.above200, 0)} · 20일 수익률 중간값 ${fmtPct(br.med_d20, 1)}`);
+    if (fo && (fo.markets || []).length) {
+      lines.push(`외국인 보유 비중 (${mmdd(fo.week)} 주): ${fo.markets.map((x) => `${x.market} ${fmtPct(x.share, 2)}${isNum(x.chg) ? ` (4주 전보다 ${gapText(x.chg, '', 2)})` : ''}`).join(' · ')}`
+        + ((fo.top || []).length ? ` · ${fo.top.map((x) => `${x.name} ${fmtPct(x.share, 1)}`).join(' · ')}` : ''));
+    }
+    if ((m.notes || []).length) lines.push(`빠진 자료: ${m.notes.join(', ')}`);
+    lines.forEach((text) => body.push(el('p', { class: 'muted', text })));
+    return card('시장 요약', `${mmdd(m.asof)} 종가 기준 · 보여 주기만`, ...body);
+  }
+  function leadersCard(d) {
+    const m = d.market || null;
+    const L = m && m.leaders;
+    if (!L) return null;
+    const c = L.counts || {};
+    const tag = (tier) => (r) => ({ ...r, tier });
+    const rows = [...(L.strict || []).map(tag('엄격')), ...(L.relaxed || []).map(tag('늦춤')), ...(L.near || []).map(tag('거의'))];
+    const span = L.flow_week_end ? `${mmdd(L.flow_week)}~${mmdd(L.flow_week_end)}` : `${mmdd(L.flow_week)} 주`;
+    const earnBase = c.dart ? `DART 분기 실적 ${fmtNum(c.dart)}종목 · 나머지는 연간 EPS` : '연간 EPS (DART 분기 자료 없음)';
+    // 칸이 많아 표 대신 목록으로 보여 줍니다(홈 옆 칸·휴대폰에서 옆으로 밀지 않게).
+    const item = (r) => el('div', { class: 'item' },
+      chip(r.tier, r.tier === '엄격' ? 'core' : r.tier === '늦춤' ? 'watch' : ''),
+      el('div', {},
+        el('div', { class: 'title' }, r.name, r.sector ? el('span', { class: 'muted', style: 'font-weight:400;font-size:12px', text: ` ${r.sector}` }) : null),
+        el('div', { class: 'detail', text: `코스피 대비 20일 ${fmtPp(r.rs20, 0)} · 60일 ${fmtPp(r.rs60, 0)} · 120일 ${fmtPp(r.rs120, 0)} · 52주 고점 대비 ${fmtPct(r.hi250, 0)}` }),
+        el('div', { class: 'detail', text: `함께 순매수 ${r.streak >= 2 ? `${fmtNum(r.streak)}주 연속` : `6주 중 ${fmtNum(r.wk6)}주`} · 4주 외국인 ${fmtEok(r.f4)} / 기관 ${fmtEok(r.i4)}` }),
+        el('div', { class: 'detail', text: `${r.earn || NONE}${r.miss ? ` · 부족: ${r.miss}` : ''}` })));
+    return card('주도주 후보', `수급 ${span} · 가격 ${mmdd(L.asof)} · 엄격 ${fmtNum((L.strict || []).length)} · 늦춘 조건 ${fmtNum((L.relaxed || []).length)}`,
+      el('p', { class: 'muted', text: `대상 ${fmtNum(c.universe)}종목 중 지수보다 강함 ${fmtNum(c.strong)} · 외국인·기관 함께 순매수 ${fmtNum(c.flow)} · 실적 늘음 ${fmtNum(c.earn)} · 실적 기준: ${earnBase}` }),
+      rows.length ? el('div', { class: 'list' }, rows.map(item)) : empty('조건에 맞는 종목이 없습니다'),
+      el('p', { class: 'muted', text: `엄격 = ${fmtNum(L.need_streak)}주 연속 함께 순매수 + 지수보다 강함 + 실적 연속 성장 · 늦춤 = 4주 합 둘 다 순매수 + 6주 중 3주 이상 + 실적 한 번 늘음 · 거의 = 강함 + 하나만 부족. 자료로 거른 결과이며 매매 신호가 아닙니다 (봇 매매와 무관).` }));
+  }
+
   // ------------------------------------------------------------------ 고른 종목 상세 (차트 + 아래 탭)
   const SUBTABS = [['chart', '차트'], ['rule', '규칙'], ['trade', '체결'], ['data', '자료']];
   function pickPanel(d, tabMarket) {
@@ -1255,6 +1331,10 @@
       itemList(t.skipped, '오늘 막힌 종목이 없습니다', 12)));
     const brief = briefCard(d);
     if (brief) idle.push(brief);
+    const marketBox = marketCard(d);            // [11-10] 시장 요약 · 주도주 후보 (자료가 없으면 안 보임)
+    if (marketBox) idle.push(marketBox);
+    const leadersBox = leadersCard(d);
+    if (leadersBox) idle.push(leadersBox);
     idle.push(card('오늘 일정', next ? `다음: ${next.time} ${next.title}` : '오늘 일정 끝',
       el('div', { class: 'timeline' }, plan.map((p) => el('div', { class: p.running ? 'running' : p.done ? 'done' : p === next ? 'next' : '' },
         el('span', { class: 'num', text: p.time }), el('span', { text: p.title }))))));
