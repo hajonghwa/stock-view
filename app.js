@@ -1130,6 +1130,12 @@
       el('div', { class: 'list' }, m.rows.map(row)),
       el('p', { class: 'muted', text: '체크가 많을수록 하락장 신호가 겹친 상태입니다. 보여 주기만 하며 봇 매매와는 관계없습니다.' }));
   }
+  // [11-12] 베어마켓 점검 탭: 미국 · 한국 각각 지금 상황만 (홈에서 옮김)
+  function renderBear(d) {
+    const us = bearCard(d, 'US'), kr = bearCard(d, 'KR');
+    if (!us && !kr) return [missing('베어마켓 점검')];
+    return [el('div', { class: 'grid two' }, us, kr)];
+  }
   function leadersCard(d) {
     const m = d.market || null;
     const L = m && m.leaders;
@@ -1354,8 +1360,6 @@
     if (marketBox) idle.push(marketBox);
     const leadersBox = leadersCard(d);
     if (leadersBox) idle.push(leadersBox);
-    const bearUS = bearCard(d, 'US'), bearKR = bearCard(d, 'KR');     // [11-12] 베어마켓 점검표
-    if (bearUS || bearKR) idle.push(el('div', { class: 'grid two' }, bearUS, bearKR));
     idle.push(card('오늘 일정', next ? `다음: ${next.time} ${next.title}` : '오늘 일정 끝',
       el('div', { class: 'timeline' }, plan.map((p) => el('div', { class: p.running ? 'running' : p.done ? 'done' : p === next ? 'next' : '' },
         el('span', { class: 'num', text: p.time }), el('span', { text: p.title }))))));
@@ -2204,6 +2208,7 @@
     perf: ['A1', '=SUMMARY(성과,세후)', '성과'],
     paper: ['A1', '=PAPER.COMPARE(자본금)', '가상'],
     logs: ['A1', '=LOG.TEXT(오늘)', '로그'],
+    bear: ['A1', '=BEAR.CHECK(미국,한국)', '베어마켓'],
   };
   function setFormulaBar() {
     const [name, formula, sheet] = SHEETS[S.tab] || SHEETS.home;
@@ -2225,7 +2230,7 @@
     const logAtBottom = logBox ? logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 30 : true;
     S.width = cells.clientWidth || window.innerWidth;
     document.querySelectorAll('.sheet-tabs button').forEach((b) => (b.dataset.tab === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
-    const parts = { home: renderHome, kr: renderKR, us: renderUS, perf: renderPerf, paper: renderPaper, logs: renderLogs }[S.tab](S.data);
+    const parts = { home: renderHome, kr: renderKR, us: renderUS, bear: renderBear, perf: renderPerf, paper: renderPaper, logs: renderLogs }[S.tab](S.data);
     const ticker = S.tab === 'home' ? null : tickerBar(S.data);   // 홈에는 전체 표가 있어 줄은 생략
     cells.replaceChildren(...(ticker ? [ticker] : []), ...parts);
     setFormulaBar();
