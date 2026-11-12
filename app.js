@@ -1111,6 +1111,25 @@
     lines.forEach((text) => body.push(el('p', { class: 'muted', text })));
     return card('시장 요약', `${mmdd(m.asof)} 종가 기준 · 보여 주기만`, ...body);
   }
+  // [11-12] 베어마켓 점검표 (미국 · 한국 각각). 기준을 넘은 항목에 ☑. 보여 주기만 · 봇 매매와 무관.
+  function bearCard(d, market) {
+    const b = d.bear || null;
+    const m = b && b.markets && b.markets[market];
+    if (!m || !(m.rows || []).length) return null;
+    const name = market === 'US' ? '미국' : '한국';
+    const row = (r) => el('div', { class: 'item bear-row' },
+      el('span', { class: `chk ${r.checked ? 'on' : r.checked === false ? 'off' : 'none'}`, 'aria-label': r.checked ? '기준 넘음' : r.checked === false ? '기준 안 넘음' : '자료 없음',
+                   text: r.checked ? '☑' : r.checked === false ? '☐' : '—' }),
+      el('div', {},
+        el('div', { class: 'title' }, r.label, r.danger ? [' ', chip('위험', 'warn')] : null),
+        el('div', { class: 'detail', text: `지금: ${r.value || NONE}${r.asof ? ` (${String(r.asof).slice(0, 10)})` : ''}` }),
+        el('div', { class: 'detail muted', text: `기준: ${r.basis || NONE}` })));
+    const on = (m.rows || []).filter((r) => r.checked);
+    return card(`베어마켓 점검 · ${name}`, `체크 ${fmtNum(m.count)} / ${fmtNum(m.total)}${m.items > m.total ? ` · 자료 없음 ${fmtNum(m.items - m.total)}` : ''} · ${b.built_at ? String(b.built_at).slice(5, 16).replace('T', ' ') : NONE}`,
+      on.length ? el('p', { class: 'muted', text: `기준 넘은 항목: ${on.map((r) => r.label.replace(/\s*\(.*\)$/, '')).join(', ')}` }) : null,
+      el('div', { class: 'list' }, m.rows.map(row)),
+      el('p', { class: 'muted', text: '체크가 많을수록 하락장 신호가 겹친 상태입니다. 보여 주기만 하며 봇 매매와는 관계없습니다.' }));
+  }
   function leadersCard(d) {
     const m = d.market || null;
     const L = m && m.leaders;
@@ -1335,6 +1354,8 @@
     if (marketBox) idle.push(marketBox);
     const leadersBox = leadersCard(d);
     if (leadersBox) idle.push(leadersBox);
+    const bearUS = bearCard(d, 'US'), bearKR = bearCard(d, 'KR');     // [11-12] 베어마켓 점검표
+    if (bearUS || bearKR) idle.push(el('div', { class: 'grid two' }, bearUS, bearKR));
     idle.push(card('오늘 일정', next ? `다음: ${next.time} ${next.title}` : '오늘 일정 끝',
       el('div', { class: 'timeline' }, plan.map((p) => el('div', { class: p.running ? 'running' : p.done ? 'done' : p === next ? 'next' : '' },
         el('span', { class: 'num', text: p.time }), el('span', { text: p.title }))))));

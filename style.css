@@ -321,6 +321,11 @@ button { cursor: pointer; }
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; }
 @media (min-width: 820px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .tiles.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }   /* [11-10] 좁은 옆 칸에 넣는 값 칸(시장 요약)은 늘 2칸 */
+/* [11-12] 베어마켓 점검표: 체크 칸 */
+.bear-row { grid-template-columns: 22px 1fr; padding: 8px 0; }
+.bear-row .chk { font-size: 17px; line-height: 1; align-self: start; padding-top: 1px; }
+.bear-row .chk.on { color: var(--warning); font-weight: 700; }
+.bear-row .chk.off, .bear-row .chk.none { color: var(--ink-2); }
 .tile { background: var(--surface); border: 1px solid var(--grid); margin: 0 -1px -1px 0; padding: 2px 8px;
   min-width: 0; height: calc(var(--cell-h) * 3); overflow: hidden; }
 .tile .label { font-size: 11px; color: var(--ink-2); }
