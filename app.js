@@ -1478,7 +1478,7 @@
     const up = steps.find(([, p]) => p > target);
     return { target, up, down: target > l.base ? l.reset : null };
   }
-  function usLadderText(l, vixNow = null) {
+  function usLadderText(l, vixNow = null, momLabel = '순위') {
     if (!l) return 'VIX 계단';
     const steps = (l.steps || []).map(([v, p]) => `${fmtNum(v)} 이상 ${fmtPct(p, 0)}`).join(' · ');
     const now = isNum(l.target) ? `지금 주식 ${fmtPct(l.target, 0)} · ${l.park || 'SGOV'} ${fmtPct(100 - l.target, 0)}` : '오늘 비중 아직 없음';
@@ -1490,7 +1490,7 @@
       if (n.up) next += ` · ${fmtNum(n.up[0])} 이상이면 ${fmtPct(n.up[1], 0)}(${fmtNum(Math.max(0, n.up[0] - v), 2, 2)} 남음)`;
       if (n.down !== null) next += ` · ${fmtNum(n.down)} 밑이면 ${fmtPct(l.base, 0)}`;
     }
-    return `${now}${vix}${next} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤${l.cut === 'lowmom' ? ' (되돌릴 때는 6-1 모멘텀 낮은 종목부터 통째로 팖)' : ''}`;
+    return `${now}${vix}${next} · 기본 ${fmtPct(l.base, 0)} · 전날 VIX ${steps} · ${fmtNum(l.reset)} 밑이면 기본으로 · 목표 ±${fmtNum(l.band)}%p 넘으면 보유 종목 비율대로 맞춤${l.cut === 'lowmom' ? ` (되돌릴 때는 ${momLabel} 모멘텀 낮은 종목부터 통째로 팖)` : ''}`;
   }
 
   // [10-28] 지금 실계좌 규칙 순위(국내 혼합1 · 미국 6-1개월). PC 프로그램 '국내 순위'·'미국 순위'와 같은 자료.
@@ -1509,7 +1509,9 @@
   }
   function rankNowCard(v, market, pick, block = false) {
     const rows = (v && v.rows) || [];
-    const title = market === 'US' ? '미국 순위 · 지금 규칙(6-1개월)' : '국내 순위 · 지금 규칙(혼합1)';
+    // [11-16] 미국 순위 기간 이름은 PC 가 보낸 label(지금 '9-1')
+    const usLabel = (v && v.label) || '순위';
+    const title = market === 'US' ? `미국 순위 · 지금 규칙(${usLabel}개월)` : '국내 순위 · 지금 규칙(혼합1)';
     if (!rows.length) return card(title, market === 'US' ? '채점 뒤 보입니다' : '거래일 15:35 뒤 하루 한 번 계산', empty('아직 순위가 없습니다'));
     const sub = [v.day ? String(v.day).slice(5) : null, isNum(v.ranked) ? `${fmtNum(v.ranked)}종목 중 상위 ${rows.length}` : null,
       isNum(v.keep_n) ? `${fmtNum(v.keep_n)}위까지 유지` : null].filter(Boolean).join(' · ');
@@ -1517,7 +1519,7 @@
       { label: '#', right: true, cell: (r) => r.rank },
       { label: '종목', lead: true, cell: (r) => el('span', { class: 'sym', text: market === 'US' ? r.symbol : (r.name || r.symbol) }) },
       { label: '상태', cell: (r) => { const [t, k] = nowState(r, block, v.min_mom); return chip(t, k); } },
-      { label: market === 'US' ? '6-1' : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) },
+      { label: market === 'US' ? usLabel : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) },
       market === 'KR' ? { label: '순위점수', right: true, cell: (r) => fmtNum(r.rank_pct, 1, 1) } : null,
       market === 'KR' ? { label: '17점', right: true, cell: (r) => (isNum(r.score17) ? r.score17 : NONE) } : null,
     ].filter(Boolean);
@@ -1529,6 +1531,7 @@
   function h1PlanCard(plan, market, pick, d = {}) {
     const cur = market === 'US' ? 'USD' : 'KRW';
     const isB = market === 'US' && !!plan && plan.rule === 'B';
+    const usLabel = ((((d || {}).rank_now || {}).us || {}).label) || '순위';     // [11-16] 지금 '9-1'
     const title = market === 'US' ? `미국 혼합1 이번 ${isB ? '달' : '주'} 계획` : '국내 혼합1 이번 주 계획';
     if (!plan || !plan.week) return card(title, '아직 점검 전', empty('그 주 첫 거래일 종가 매매(국내 15:18 · 미국 첫 장) 때 계획을 세웁니다'));
     // [11-03 웹 고도화 8] 미국은 티커로(보유 표·순위 표와 같은 이름) · 회사 이름은 넓은 화면에서만
@@ -1539,7 +1542,7 @@
       + (isNum(plan.ranked) ? ` · 순위 ${fmtNum(plan.ranked)}종목` : '');
     const list = (rows, extra) => dense([
       { label: '종목', lead: true, cell: (r) => name(r) },
-      rows.some((r) => isNum(r.mom)) ? { label: market === 'US' ? '6-1' : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) } : null,
+      rows.some((r) => isNum(r.mom)) ? { label: market === 'US' ? usLabel : '12-1', right: true, tone: (r) => cls(r.mom), cell: (r) => fmtPct(r.mom, 1) } : null,
       ...(extra || []),
     ].filter(Boolean), rows, { onPick: pick, selected: S.pick, key: (r) => `${market}:${r.symbol}` });
     const sell = plan.sell || [], buy = plan.buy || [], left = plan.left || [], blocked = plan.buy_blocked || [];
@@ -1552,11 +1555,11 @@
     const stop = isNum(plan.stop) && plan.stop !== 0 ? `고점 대비 ${fmtPct(-Math.abs(plan.stop), 0)} 손절` : '고점 대비 손절 끔';
     const keep = isNum(plan.keep) ? fmtPct(plan.keep, 0) : NONE;
     const rules = isB
-      ? [['순위', '6-1개월 수익률'],
+      ? [['순위', `${usLabel}개월 수익률`],
          ['매달 첫 장', `순위 상위 ${keep} 밖·자격 상위 10 밖이면 교체 · 보유 종목은 100일선 아래여도 유지(새로 살 때만 100일선 위) · ${stop}`],
-         ['주식 비중', usLadderText(plan.ladder, (((d.brief || {}).items) || []).find((r) => r.label === 'VIX') || null)]]
+         ['주식 비중', usLadderText(plan.ladder, (((d.brief || {}).items) || []).find((r) => r.label === 'VIX') || null, usLabel)]]
       : market === 'US'
-      ? [['순위', '6-1개월 수익률'],
+      ? [['순위', `${usLabel}개월 수익률`],
          ['매주 첫 장', `자격 잃음·순위 상위 ${keep} 밖이면 매도 · 월 첫 점검은 상위 10 밖 교체 · ${stop}(장중)`
            + (plan.market_filter === true ? ' · 동일가중 지수 100일선 아래면 신규 매수 멈춤' : '')]]
       : [['순위', plan.rule || '12-1개월 수익률'],
