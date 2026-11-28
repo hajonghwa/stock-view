@@ -1602,7 +1602,11 @@
            + (plan.market_filter === true ? ' · 동일가중 지수 100일선 아래면 신규 매수 멈춤' : '')]]
       : [['순위', plan.rule || '12-1개월 수익률'],
          ['매일 15:18', `${stop}${isNum(plan.g_stop) && plan.g_stop !== 0 ? ` (평단보다 ${fmtNum(plan.g_gain, 1, 0)}% 넘게 올랐던 종목은 ${fmtPct(-Math.abs(plan.g_stop), 1)})` : ''}${plan.daily_ma ? ' · 100일선 이탈 매도' : ''}`
-           + (plan.score_drop ? ` · 모멘텀약화(산 날보다 ${fmtNum(plan.score_drop)}점 이상 하락${plan.score_floor ? `·${fmtNum(plan.score_floor)}점 이하` : ''}) 매도` : '')],
+           + (plan.score_drop ? ` · 모멘텀약화(산 날보다 ${fmtNum(plan.score_drop)}점 이상 하락${plan.score_floor ? `·${fmtNum(plan.score_floor)}점 이하` : ''}) 매도` : '')
+           + (plan.open_exit ? ' · 손절·100일선은 15:18에 판단하고 다음 거래일 시가(08:40 시가 단일가 주문)에 매도 · 못 팔면 그날 15:18 다시 판단' : '')],
+         ...((plan.open_exits || []).length
+           ? [['시가 매도 예정', plan.open_exits.map((r) => `${r.name || r.symbol} ${mmdd(r.sell_on)} 시가 (${r.label || '매도'})`).join(' · ')]]
+           : []),
          ['매주 첫 거래일', `자격 잃음·순위 상위 ${keep} 밖이면 매도 · 월 첫 점검은 상위 ${fmtNum(plan.monthly_keep || plan.slots || 10)} 밖 교체`
            + (isNum(plan.share_limit) ? ` · 1주가 종목당의 ${fmtNum(plan.share_limit, 1, 0)}배 이하면 1주 매수` : '')]];
     let unboughtNote = null;
