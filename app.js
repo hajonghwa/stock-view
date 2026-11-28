@@ -1136,6 +1136,39 @@
     if (!us && !kr) return [missing('베어마켓 점검')];
     return [el('div', { class: 'grid two' }, us, kr)];
   }
+  // [11-28] 토스 투자자별 순매수·순매도 순위(KRX+NXT 통합 · 20시까지 바뀜) · 섹터 순위(토스 분류). ★ = 보유 종목.
+  function tossCard(d) {
+    const m = d.market || null;
+    const t = m && m.summary && m.summary.toss;
+    if (!t) return null;
+    const inv = t.investor || {};
+    const nm = (r) => `${r.held ? '★' : ''}${r.name || r.symbol}`;
+    const list = (rows) => (rows || []).slice(0, 10).map((r) => `${nm(r)} ${fmtEok(r.amount)}`).join(' · ') || NONE;
+    const block = (key, label) => {
+      const b = inv[key] || {};
+      if (!(b.buy || []).length && !(b.sell || []).length) return null;
+      return el('div', { class: 'item' }, el('div', {},
+        el('div', { class: 'title', text: label }),
+        el('div', { class: 'detail', text: `순매수 ${list(b.buy)}` }),
+        el('div', { class: 'detail', text: `순매도 ${list(b.sell)}` })));
+    };
+    const sec = t.sectors || {};
+    const rate = (rows) => (rows || []).map((r) => `${r.name} ${fmtPct(r.rate, 1)}`).join(' · ') || NONE;
+    const secRow = (key, label) => {
+      const s = sec[key] || {};
+      if (!(s.top || []).length) return null;
+      return el('div', { class: 'item' }, el('div', {},
+        el('div', { class: 'title', text: `섹터 ${label}` }),
+        el('div', { class: 'detail', text: `강함 ${rate(s.top)}` }),
+        (s.bottom || []).length ? el('div', { class: 'detail', text: `약함 ${rate(s.bottom)}` }) : null));
+    };
+    const when = String(t.fetched_at || '').slice(11, 16);
+    return card('토스 수급·섹터 순위', `${mmdd(t.day)} ${when} 기준 · ${t.final ? '20시 확정' : '20시까지 바뀜'} · KRX+NXT`,
+      el('div', { class: 'list' }, [block('frgn', '외국인'), block('inst', '기관'), block('indiv', '개인'),
+        secRow('1d', '오늘'), secRow('1w', '1주'), secRow('1mo', '1개월')].filter(Boolean)),
+      el('p', { class: 'muted', text: '★ = 보유 종목 · 섹터는 토스 자체 분류 · 보여 주기만이며 봇 매매와 무관합니다.' }));
+  }
+
   function leadersCard(d) {
     const m = d.market || null;
     const L = m && m.leaders;
@@ -1152,7 +1185,10 @@
         el('div', { class: 'title' }, r.name, r.sector ? el('span', { class: 'muted', style: 'font-weight:400;font-size:12px', text: ` ${r.sector}` }) : null),
         el('div', { class: 'detail', text: `코스피 대비 20일 ${fmtPp(r.rs20, 0)} · 60일 ${fmtPp(r.rs60, 0)} · 120일 ${fmtPp(r.rs120, 0)} · 52주 고점 대비 ${fmtPct(r.hi250, 0)}` }),
         el('div', { class: 'detail', text: `함께 순매수 ${r.streak >= 2 ? `${fmtNum(r.streak)}주 연속` : `6주 중 ${fmtNum(r.wk6)}주`} · 4주 외국인 ${fmtEok(r.f4)} / 기관 ${fmtEok(r.i4)}` }),
-        el('div', { class: 'detail', text: `${r.earn || NONE}${r.miss ? ` · 부족: ${r.miss}` : ''}` })));
+        el('div', { class: 'detail', text: `${r.earn || NONE}${r.miss ? ` · 부족: ${r.miss}` : ''}` }),
+        (isNum(r.tf) || isNum(r.ti) || (r.tsec || []).length)
+          ? el('div', { class: 'detail', text: `오늘(토스) 외국인 ${isNum(r.tf) ? fmtEok(r.tf) : NONE} / 기관 ${isNum(r.ti) ? fmtEok(r.ti) : NONE}${(r.tsec || []).length ? ` · 강한 섹터 ${r.tsec.join('·')}` : ''}` })
+          : null));
     return card('주도주 후보', `수급 ${span} · 가격 ${mmdd(L.asof)} · 엄격 ${fmtNum((L.strict || []).length)} · 늦춘 조건 ${fmtNum((L.relaxed || []).length)}`,
       el('p', { class: 'muted', text: `대상 ${fmtNum(c.universe)}종목 중 지수보다 강함 ${fmtNum(c.strong)} · 외국인·기관 함께 순매수 ${fmtNum(c.flow)} · 실적 늘음 ${fmtNum(c.earn)} · 실적 기준: ${earnBase}` }),
       rows.length ? el('div', { class: 'list' }, rows.map(item)) : empty('조건에 맞는 종목이 없습니다'),
@@ -1360,6 +1396,8 @@
     if (marketBox) idle.push(marketBox);
     const leadersBox = leadersCard(d);
     if (leadersBox) idle.push(leadersBox);
+    const tossBox = tossCard(d);                // [11-28] 토스 투자자별 순매수 순위 · 섹터 순위
+    if (tossBox) idle.push(tossBox);
     idle.push(card('오늘 일정', next ? `다음: ${next.time} ${next.title}` : '오늘 일정 끝',
       el('div', { class: 'timeline' }, plan.map((p) => el('div', { class: p.running ? 'running' : p.done ? 'done' : p === next ? 'next' : '' },
         el('span', { class: 'num', text: p.time }), el('span', { text: p.title }))))));
